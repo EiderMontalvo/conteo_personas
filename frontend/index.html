@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conteo de personas con cámaras</title>
+    <meta name="description"
+        content="Sistema de monitorización en tiempo real del flujo de personas con cámaras Hanwha Wisenet.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">◈</span>
+                <h2>Conteo de personas</h2>
+            </div>
+            <ul class="nav-links">
+                <li class="active"><a href="#">Dashboard en Tiempo Real</a></li>
+                <li><a href="#">Reportes Históricos</a></li>
+                <li><a href="#">Ajustes de Cámara</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <p>Cámaras Wisenet</p>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header>
+                <div class="header-titles">
+                    <h1>Conteo de Personas</h1>
+                    <p id="camera-subtitle">Cargando cámaras...</p>
+                </div>
+                <div class="header-controls">
+                    <select id="camera-select">
+                        <option disabled selected>-- Seleccionar cámara --</option>
+                    </select>
+                    <div class="status-indicator">
+                        <span class="dot"></span>
+                        <span class="status-text">Conectando...</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- KPI Cards -->
+            <section class="kpi-grid">
+                <div class="kpi-card glassmorphism" id="card-in">
+                    <div class="kpi-icon in-icon">↓</div>
+                    <div class="kpi-info">
+                        <h3>Entradas</h3>
+                        <p class="kpi-value" id="count-in">—</p>
+                    </div>
+                </div>
+                <div class="kpi-card glassmorphism" id="card-out">
+                    <div class="kpi-icon out-icon">↑</div>
+                    <div class="kpi-info">
+                        <h3>Salidas</h3>
+                        <p class="kpi-value" id="count-out">—</p>
+                    </div>
+                </div>
+                <div class="kpi-card glassmorphism" id="card-net">
+                    <div class="kpi-icon net-icon">Σ</div>
+                    <div class="kpi-info">
+                        <h3>Flujo Neto</h3>
+                        <p class="kpi-value" id="count-net">—</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Analytics Chart -->
+            <section class="chart-section glassmorphism">
+                <div class="chart-header">
+                    <h2>Flujo en Tiempo Real</h2>
+                </div>
+                <div class="chart-container">
+                    <canvas id="flowChart"></canvas>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
