@@ -26,6 +26,18 @@ fi
 echo "[INFO] Instalando/verificando dependencias..."
 "$PIP_BIN" install -q -r "$BACKEND_DIR/requirements.txt"
 
+# ── 3. Dependencias del Frontend ────────────────────────────
+echo "[INFO] Verificando dependencias del Frontend..."
+cd "$FRONTEND_DIR"
+if command -v npm >/dev/null 2>&1; then
+    if [ ! -d "node_modules" ]; then
+        echo "[INFO] Descargando dependencias de Node (npm install)..."
+        npm install
+    fi
+else
+    echo "[WARNING] npm no está instalado. No se puede compilar el frontend automáticamente."
+fi
+cd "$PROJECT_DIR"
 # ── 3. Verificar que existe el .env ─────────────────────────
 if [ ! -f "$BACKEND_DIR/.env" ]; then
     echo "[ERROR] No se encontró backend/.env"
@@ -36,7 +48,7 @@ fi
 # ── 4. Iniciar Frontend en segundo plano ────────────────────
 echo "[INFO] Iniciando servidor de Frontend en http://localhost:3001 ..."
 cd "$FRONTEND_DIR"
-"$PYTHON_BIN" -m http.server 3001 &
+npm run dev -- --port 3001 &
 FRONTEND_PID=$!
 cd "$PROJECT_DIR"
 

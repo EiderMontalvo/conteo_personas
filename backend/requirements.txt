@@ -6,3 +6,6 @@ httpx
 websockets
 python-dotenv
 onvif-zeep
+openpyxl
+pytz
+python-multipart

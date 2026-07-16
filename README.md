@@ -1,115 +1,129 @@
 # Sistema de Business Intelligence y Conteo de Personas
 
-Sistema local, liviano y escalable para monitorizar en tiempo real el flujo de personas usando **cámaras Hanwha Wisenet XNO-6120R** a través del protocolo **ONVIF** (Suscripción de Eventos).
+Sistema local, liviano y escalable para monitorizar en tiempo real el flujo de personas usando **camaras Hanwha Wisenet XNO-6120R** a traves del protocolo **ONVIF** (Suscripcion de Eventos).
 
 Compatible con **Windows 10/11** y **Linux (Debian/Ubuntu/Arch)**.
 
 ---
 
-## Índice
+## Indice
 
 1. [Arquitectura del Sistema](#arquitectura-del-sistema)
 2. [Requisitos Previos](#requisitos-previos)
-3. [Configuración de la Cámara (Hanwha)](#configuración-de-la-cámara-hanwha)
-4. [Instalación — Linux](#instalación--linux)
-5. [Instalación — Windows](#instalación--windows)
+3. [Configuracion de la Camara (Hanwha)](#configuracion-de-la-camara-hanwha)
+4. [Instalacion — Linux](#instalacion--linux)
+5. [Instalacion — Windows](#instalacion--windows)
 6. [Configurar Credenciales (.env)](#configurar-credenciales-env)
 7. [Iniciar el Sistema](#iniciar-el-sistema)
 8. [API Endpoints](#api-endpoints)
 9. [Estructura del Proyecto](#estructura-del-proyecto)
-10. [Solución de Problemas](#solución-de-problemas)
+10. [Solucion de Problemas](#solucion-de-problemas)
 
 ---
 
 ## Arquitectura del Sistema
 
 ```
-[Cámaras Wisenet] --PoE--> [Switch Dahua] --RTSP/ONVIF--> [NVR Uniview]
-                                  |
-                        ONVIF (Event Subscription)
-                                  |
-                 ┌────────────────────────────────────┐
-                 │   Backend Python (FastAPI)          │
-                 │   · polling asíncrono por cámara   │
-                 │   · persistencia SQLite/PostgreSQL  │
-                 │   · WebSocket + REST API            │
-                 └────────────────────────────────────┘
-                                  |
-                     WebSocket (tiempo real) + REST
-                                  |
-                 ┌────────────────────────────────────┐
-                 │   Frontend (Vanilla JS + Chart.js)  │
-                 │   · Dashboard con selector cámara   │
-                 │   · Gráficos en tiempo real         │
-                 └────────────────────────────────────┘
+[Camaras Wisenet] --PoE--> [Switch] --ONVIF Event Subscription-->
+                                   |
+                  +--------------------------------------------+
+                  |   Backend Python (FastAPI)                  |
+                  |   - Polling asincrono por camara            |
+                  |   - Persistencia event-driven (SQLite/PG)  |
+                  |   - WebSocket + REST API                    |
+                  |   - Exportacion / Importacion Excel         |
+                  +--------------------------------------------+
+                                   |
+                  WebSocket (tiempo real) + REST
+                                   |
+                  +--------------------------------------------+
+                  |   Frontend (Vanilla JS + Chart.js)          |
+                  |   - Dashboard tiempo real                   |
+                  |   - Dashboard de analitica historica        |
+                  |   - Exportar / Importar .xlsx               |
+                  +--------------------------------------------+
 ```
+
+### Estrategia de almacenamiento
+
+El sistema usa una estrategia **event-driven** para minimizar el espacio en disco:
+
+- **change_event**: se guarda unicamente cuando los conteos cambian (alguien cruza la linea).
+- **hourly_heartbeat**: si no hay actividad, se guarda un registro por hora dentro del horario de negocio configurado. Esto preserva la continuidad temporal en los reportes sin desperdiciar espacio.
+- **imported**: registros cargados desde un archivo Excel externo.
+
+### Soporte de camaras por rol
+
+Cuando la entrada y la salida estan en puntos fisicos distintos:
+
+```dotenv
+CAMERA_0_ROLE=in_only
+CAMERA_0_GROUP=puerta_principal
+
+CAMERA_1_ROLE=out_only
+CAMERA_1_GROUP=puerta_principal
+```
+
+Ambas camaras se consolidan como un solo punto en los reportes y el Excel exportado.
 
 ---
 
 ## Requisitos Previos
 
-| Componente | Versión mínima | Notas |
+| Componente | Version minima | Notas |
 |------------|---------------|-------|
 | Python | 3.9 | [python.org](https://www.python.org/downloads/) |
-| Cámara Hanwha XNO-6120R | Firmware 2.x+ | Con analítica IVA configurada |
+| Camara Hanwha XNO-6120R | Firmware 2.x+ | Con analitica IVA configurada |
 | Navegador | Chrome 90+ / Firefox 88+ | Para el Dashboard |
-| Red | LAN / Wi-Fi | El equipo debe tener acceso a las IPs de las cámaras |
+| Red | LAN | El equipo debe tener acceso a las IPs de las camaras |
 
 ---
 
-## Configuración de la Cámara (Hanwha)
-
-Antes de ejecutar el sistema, la cámara debe estar configurada para que el backend pueda extraer los conteos.
+## Configuracion de la Camara (Hanwha)
 
 ### Paso 1 — Acceder a la interfaz web
 
-Abre un navegador e ingresa a la IP de la cámara (ej. `http://192.168.1.100`).  
-Inicia sesión con tu usuario y contraseña de administrador.
+Abre un navegador e ingresa a la IP de la camara (ej. `http://192.168.1.100`).
+Inicia sesion con tu usuario y contrasena de administrador.
 
-### Paso 2 — Verificar la tarjeta MicroSD (para estadísticas históricas)
+### Paso 2 — Verificar la tarjeta MicroSD (opcional)
 
-La tarjeta MicroSD habilita el **motor de estadísticas nativo** de Wisenet, que acumula conteos históricos incluso si el backend se desconecta temporalmente.
+La tarjeta MicroSD habilita el motor de estadisticas nativo de Wisenet, que acumula conteos historicos incluso si el backend se desconecta temporalmente.
 
-1. Ve a **Configuración → Almacenamiento → Tarjeta SD**.
+1. Ve a **Configuracion > Almacenamiento > Tarjeta SD**.
 2. Verifica que el estado aparezca como `Montada` y el formato sea `EXT4`.
 3. Si aparece como `No formateada`, haz clic en **Formatear** (esto borra el contenido de la tarjeta).
 
-> **Nota:** La MicroSD es opcional para el funcionamiento en tiempo real del sistema, pero recomendada para disponer de estadísticas históricas en la propia cámara.
+> La MicroSD es opcional para el funcionamiento en tiempo real del sistema.
 
-### Paso 3 — Configurar la línea virtual IVA (Conteo de personas)
+### Paso 3 — Configurar la linea virtual IVA
 
-El sistema lee los conteos de la función **IVA (Intelligent Video Analytics)** de la cámara.
-
-1. Ve a **Configuración → Analíticas → IVA**.
-2. Haz clic en **Agregar regla** y selecciona el tipo **Cruce de línea (Line Crossing)** o **Conteo de personas**.
-3. Dibuja la línea virtual en la zona de interés (ej. puerta de entrada).
-4. Configura las **Direcciones**:
-   - `A → B`: cuenta como **Entrada**.
-   - `B → A`: cuenta como **Salida**.
-   - `A ↔ B`: cuenta ambas direcciones.
-5. Asegúrate de que la regla esté **Habilitada** y guarda los cambios.
+1. Ve a **Configuracion > Analiticas > IVA**.
+2. Haz clic en **Agregar regla** y selecciona **Cruce de linea (Line Crossing)**.
+3. Dibuja **una sola linea recta** que atraviese el area de interes (ej. el pasillo de la puerta).
+4. Configura las direcciones:
+   - `A a B`: cuenta como **Entrada**.
+   - `B a A`: cuenta como **Salida**.
+   - `A y B`: cuenta ambas direcciones.
+5. Asegurate de que la regla este **Habilitada** y guarda los cambios.
 
 ### Paso 4 — Habilitar Notificaciones ONVIF
 
-Para que la cámara envíe los eventos en tiempo real a nuestro backend, es indispensable habilitar el protocolo ONVIF:
+Para que la camara envie los eventos en tiempo real al backend:
 
-1. Ve a **Red → ONVIF**.
-2. Habilita el protocolo ONVIF y crea un usuario (usa las mismas credenciales que pondrás en tu archivo `.env`).
-3. Ve a **Evento → Reglas de evento** (Event Rules).
-4. Asegúrate de que la "Línea virtual" esté habilitada y tenga permiso de notificar eventos.
+1. Ve a **Red > ONVIF**.
+2. Habilita el protocolo ONVIF y crea un usuario con las mismas credenciales que pondras en `.env`.
+3. Ve a **Evento > Reglas de evento** (Event Rules).
+4. Asegurate de que la linea virtual este habilitada y tenga permiso de notificar eventos.
 
 ---
 
-## Instalación — Linux
+## Instalacion — Linux
 
 ### 1. Clonar o descargar el proyecto
 
 ```bash
-# Con git:
 git clone <url-del-repositorio> conteo_personas
-cd conteo_personas
-
-# O descomprime el ZIP y entra a la carpeta:
 cd conteo_personas
 ```
 
@@ -118,7 +132,6 @@ cd conteo_personas
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-
 pip install -r backend/requirements.txt
 ```
 
@@ -126,67 +139,52 @@ pip install -r backend/requirements.txt
 
 ```bash
 cp backend/.env.example backend/.env
-nano backend/.env        # o usa tu editor preferido
+nano backend/.env
 ```
-
-Rellena `CAMERA_USER`, `CAMERA_PASS` y las IPs de tus cámaras. Ver la sección [Configurar Credenciales](#configurar-credenciales-env).
 
 ### 4. Iniciar el sistema
 
 ```bash
-chmod +x start.sh   # solo la primera vez
+chmod +x start.sh
 ./start.sh
 ```
 
-El script levanta **automáticamente** el backend (puerto 8000) y el frontend (puerto 3001).  
 Abre tu navegador en: **http://localhost:3001**
 
 ---
 
-## Instalación — Windows
+## Instalacion — Windows
 
 ### 1. Instalar Python
 
 1. Descarga Python 3.11+ desde [python.org](https://www.python.org/downloads/).
-2. Durante la instalación, **marca la casilla "Add Python to PATH"** (muy importante).
-3. Verifica la instalación abriendo `CMD` o `PowerShell` y escribiendo:
-   ```
-   python --version
-   ```
+2. Durante la instalacion, **marca la casilla "Add Python to PATH"**.
+3. Verifica: `python --version`
 
 ### 2. Descargar el proyecto
 
-Descarga y descomprime el ZIP del proyecto, o clónalo con git si lo tienes instalado:
-
-```powershell
-git clone <url-del-repositorio> conteo_personas
-cd conteo_personas
-```
+Descarga y descomprime el ZIP del proyecto.
 
 ### 3. Configurar credenciales
-
-Abre el Explorador de Archivos, ve a la carpeta `backend\` y copia el archivo `.env.example`:
 
 ```cmd
 copy backend\.env.example backend\.env
 ```
 
-Luego abre `backend\.env` con el Bloc de Notas y rellena tus datos.  
-Ver la sección [Configurar Credenciales](#configurar-credenciales-env).
+Abre `backend\.env` con el Bloc de Notas y rellena tus datos.
 
 ### 4. Iniciar el sistema
 
-Simplemente **haz doble clic en `start.bat`** desde el Explorador de Archivos.
+Haz doble clic en `start.bat` desde el Explorador de Archivos.
 
-El script realizará automáticamente:
+El script realizara automaticamente:
 - Crear el entorno virtual Python
 - Instalar todas las dependencias
-- Verificar que el `.env` existe
 - Levantar el backend y el frontend en paralelo
 
 Abre tu navegador en: **http://localhost:3001**
 
-> **Nota Windows:** Si aparece una advertencia de SmartScreen, haz clic en "Más información" → "Ejecutar de todas formas". Es un `.bat` local, no un archivo descargado de internet.
+> Si aparece una advertencia de SmartScreen, haz clic en "Mas informacion" > "Ejecutar de todas formas".
 
 ---
 
@@ -195,89 +193,58 @@ Abre tu navegador en: **http://localhost:3001**
 Edita el archivo `backend/.env` (nunca subas este archivo a git):
 
 ```dotenv
-# ── Credenciales (compartidas por todas las cámaras) ────────
-CAMERA_USER=[USER]
-CAMERA_PASS=[PASSWORD]
+# Credenciales compartidas por todas las camaras
+CAMERA_USER=admin
+CAMERA_PASS=tu_contrasena
 
-# ── Definición de cámaras ───────────────────────────────────
-# El sistema detecta automáticamente todas las CAMERA_N_IP definidas.
-# Puedes agregar o quitar bloques según cuántas cámaras tengas.
-
+# Camara 0: una sola camara para entradas y salidas
 CAMERA_0_IP=192.168.1.100
 CAMERA_0_NAME=Entrada Principal
+CAMERA_0_ROLE=both
 
-CAMERA_1_IP=192.168.1.101
-CAMERA_1_NAME=Salida Lateral
+# Alternativa: dos camaras para la misma puerta (una por sentido)
+# CAMERA_0_ROLE=in_only
+# CAMERA_0_GROUP=puerta_principal
+# CAMERA_1_IP=192.168.1.101
+# CAMERA_1_NAME=Salida Principal
+# CAMERA_1_ROLE=out_only
+# CAMERA_1_GROUP=puerta_principal
 
-CAMERA_2_IP=192.168.1.102
-CAMERA_2_NAME=Pasillo Central
-
-CAMERA_3_IP=192.168.1.103
-CAMERA_3_NAME=Acceso Bodega
-
-# ── Polling ──────────────────────────────────────────────────
-# Intervalo de consulta a la cámara en segundos.
-# No bajar de 2 para no saturar la CPU de la cámara.
 POLL_INTERVAL_SECONDS=3
-
-# ── Base de datos ────────────────────────────────────────────
-# SQLite (por defecto, no requiere instalar nada extra):
 DATABASE_URL=sqlite:///./conteo_personas.db
 
-# PostgreSQL (opcional, para producción / ML a futuro):
-# DATABASE_URL=postgresql://usuario:contraseña@localhost/conteo_personas
+TIMEZONE=America/Lima
+BUSINESS_HOUR_START=0
+BUSINESS_HOUR_END=24
 ```
 
 ---
 
 ## Iniciar el Sistema
 
-### Método rápido (recomendado)
-
 | Sistema | Comando |
 |---------|---------|
-| **Linux / macOS** | `./start.sh` |
-| **Windows** | Doble clic en `start.bat` |
+| Linux / macOS | `./start.sh` |
+| Windows | Doble clic en `start.bat` |
 
-### Método manual
-
-Si prefieres iniciar cada componente por separado:
-
-**Linux:**
-```bash
-# Terminal 1 - Backend
-source venv/bin/activate
-cd backend
-python main.py
-
-# Terminal 2 - Frontend
-cd frontend
-python3 -m http.server 3001
-```
-
-**Windows (CMD):**
-```cmd
-REM Terminal 1 - Backend
-venv\Scripts\python.exe backend\main.py
-
-REM Terminal 2 - Frontend
-venv\Scripts\python.exe -m http.server 3001 --directory frontend
-```
-
-**Acceso al Dashboard:** http://localhost:3001
+**Dashboard tiempo real:** http://localhost:3001/index.html
+**Dashboard analitica:** http://localhost:3001/analytics.html
+**Documentacion API:** http://localhost:8000/docs
 
 ---
 
 ## API Endpoints
 
-Con el backend corriendo, puedes acceder a la documentación interactiva en **http://localhost:8000/docs**.
+Con el backend corriendo, accede a la documentacion interactiva en **http://localhost:8000/docs**.
 
-| Método | Ruta | Descripción |
+| Metodo | Ruta | Descripcion |
 |--------|------|-------------|
-| `GET` | `/api/cameras` | Lista las cámaras configuradas |
-| `GET` | `/api/stats/historical` | Histórico de eventos (filtrable por `camera_id` y `limit`) |
-| `WS` | `/ws/live` | Stream WebSocket en tiempo real (todas las cámaras) |
-| `GET` | `/docs` | Swagger UI — Documentación interactiva |
+| `GET` | `/api/cameras` | Lista las camaras configuradas |
+| `GET` | `/api/stats/historical` | Historico de eventos (filtrable por `camera_id`, `group`, `limit`) |
+| `GET` | `/api/export/excel` | Exporta datos a `.xlsx` (parametros: `camera_id`, `group`, `date_from`, `date_to`) |
+| `POST` | `/api/import/excel` | Importa datos desde un `.xlsx` |
+| `WS` | `/ws/live` | Stream WebSocket en tiempo real |
+| `GET` | `/docs` | Swagger UI |
 
 ---
 
@@ -285,41 +252,48 @@ Con el backend corriendo, puedes acceder a la documentación interactiva en **ht
 
 ```
 conteo_personas/
-├── start.sh                ← Inicio rápido en Linux/macOS
-├── start.bat               ← Inicio rápido en Windows
-├── .gitignore
-├── README.md
-│
-├── backend/
-│   ├── .env                ← Credenciales (NO subir a git)
-│   ├── .env.example        ← Plantilla de configuración
-│   ├── requirements.txt
-│   ├── config.py           ← Carga .env, tipado fuerte, singleton
-│   ├── database.py         ← Motor SQLAlchemy (SQLite / PostgreSQL)
-│   ├── models.py           ← Tablas ORM
-│   ├── schemas.py          ← Validación Pydantic
-│   ├── sunapi.py           ← Cliente ONVIF (Zeep) para suscripción de eventos
-│   ├── poller.py           ← Demonio multi-cámara asíncrono
-│   └── main.py             ← FastAPI (REST + WebSockets + ciclo de vida)
-│
-└── frontend/
-    ├── index.html
-    ├── css/
-    │   └── style.css
-    └── js/
-        └── app.js
++-- start.sh                  <- Inicio rapido en Linux/macOS
++-- start.bat                 <- Inicio rapido en Windows
++-- .gitignore
++-- README.md
+|
++-- backend/
+|   +-- .env                  <- Credenciales (NO subir a git)
+|   +-- .env.example          <- Plantilla de configuracion
+|   +-- requirements.txt
+|   +-- config.py             <- Variables de entorno tipadas (TIMEZONE, ROLE, GROUP...)
+|   +-- database.py           <- Motor SQLAlchemy (SQLite / PostgreSQL)
+|   +-- models.py             <- Tablas ORM (CountingEvent, Camera, HourlyStat)
+|   +-- schemas.py            <- Validacion Pydantic
+|   +-- sunapi.py             <- Cliente ONVIF (Zeep) para suscripcion de eventos
+|   +-- poller.py             <- Demonio asincrono: event-driven + heartbeat + roles
+|   +-- main.py               <- FastAPI: rutas REST, WebSocket, ciclo de vida
+|   +-- services/
+|       +-- excel_service.py  <- Generacion y parseo de archivos Excel (SRP)
+|
++-- frontend/
+    +-- index.html            <- Dashboard tiempo real
+    +-- analytics.html        <- Dashboard de analitica historica
+    +-- css/
+    |   +-- style.css         <- Estilos base (variables, layout, componentes)
+    |   +-- analytics.css     <- Estilos especificos del dashboard analitico
+    +-- js/
+        +-- app.js            <- Logica del dashboard tiempo real
+        +-- analytics.js      <- Logica del dashboard analitico
 ```
 
 ---
 
-## Solución de Problemas
+## Solucion de Problemas
 
-| Problema | Causa probable | Solución |
+| Problema | Causa probable | Solucion |
 |----------|---------------|----------|
-| `Error de conexión con la cámara X.X.X.X` | IP incorrecta o cámara apagada | Haz `ping 192.168.1.100` desde tu equipo. Si falla, revisa la red. |
-| El conteo se queda en 0 | Evento no asignado en ONVIF | Revisa "Event Rules" en la cámara y asegúrate de que la línea virtual esté activa. |
+| `Error de conexion con la camara X.X.X.X` | IP incorrecta o camara apagada | Haz `ping 192.168.1.100` desde tu equipo. Si falla, revisa la red. |
+| El conteo se queda en 0 | Evento no asignado en ONVIF | Revisa "Event Rules" en la camara y asegurate de que la linea virtual este activa. |
 | `python: command not found` (Linux) | Python 3 no instalado | Instala con `sudo apt install python3 python3-venv python3-pip` |
 | `pip: No existe el fichero` | venv corrupto | Elimina la carpeta `venv/` y vuelve a ejecutar `start.sh` o `start.bat`. |
-| `Address already in use` | El puerto ya está en uso | Cambia el puerto del frontend en el script (`3001` → `3002`, etc.) |
-| SmartScreen bloquea `start.bat` | Windows Defender | Haz clic derecho en `start.bat` → Propiedades → Desbloquear. |
-| Dashboard muestra "Desconectado" | Backend no corriendo o error de CORS | Verifica que `main.py` esté ejecutándose y no haya errores en su consola. |
+| `Address already in use` | El puerto ya esta en uso | Cambia el puerto del frontend en el script (`3001` a `3002`, etc.) |
+| SmartScreen bloquea `start.bat` | Windows Defender | Haz clic derecho en `start.bat` > Propiedades > Desbloquear. |
+| Dashboard muestra "Desconectado" | Backend no corriendo | Verifica que `main.py` este ejecutandose sin errores en su consola. |
+| El Excel exportado esta vacio | Sin datos en el rango de fechas | Amplia el rango de fechas o verifica que haya actividad registrada en la BD. |
+| Error al importar Excel | Columnas incorrectas | El archivo debe tener las columnas: `Fecha`, `Hora`, `Entradas`, `Salidas`. |

@@ -1,49 +1,30 @@
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime
-from typing import Optional, List
 
-class CameraBase(BaseModel):
-    ip_address: str
-    name: str
-    is_active: bool = True
+class CameraConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    location: Optional[str] = None
+    zone: Optional[str] = None
+    max_capacity: Optional[int] = None
+    count_direction: Optional[str] = None
+    virtual_line: Optional[str] = None
+    operating_hours_start: Optional[str] = None
+    operating_hours_end: Optional[str] = None
+    is_active: Optional[bool] = None
 
-class CameraCreate(CameraBase):
-    pass
+class SystemSettingsUpdate(BaseModel):
+    update_interval: Optional[int] = None
+    heartbeat_interval: Optional[int] = None
+    timezone: Optional[str] = None
+    date_format: Optional[str] = None
+    time_format: Optional[str] = None
+    warning_threshold: Optional[int] = None
+    critical_threshold: Optional[int] = None
 
-class Camera(CameraBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-class CountingEventBase(BaseModel):
-    in_count: int
-    out_count: int
-    event_type: str
-
-class CountingEventCreate(CountingEventBase):
-    camera_id: int
-
-class CountingEvent(CountingEventBase):
-    id: int
-    camera_id: int
-    timestamp: datetime
-
-    class Config:
-        from_attributes = True
-
-class HourlyStat(BaseModel):
-    id: int
-    camera_id: int
-    hour_bucket: datetime
+class CameraStateOut(BaseModel):
+    people_inside: int
     total_in: int
     total_out: int
-
-    class Config:
-        from_attributes = True
-        
-class LiveData(BaseModel):
-    timestamp: str
-    in_count: int
-    out_count: int
-    
+    last_update: datetime
+    status: str

@@ -15,7 +15,7 @@ set "PYTHON_BIN=%VENV_DIR%\Scripts\python.exe"
 set "PIP_BIN=%VENV_DIR%\Scripts\pip.exe"
 
 echo.
-echo  BI People Counting - Sistema de Conteo de Personas
+echo  Sistema de Conteo de Personas
 echo  ====================================================
 
 REM ── 1. Verificar que Python esté instalado ──────────────────
@@ -47,6 +47,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM ── 3.1. Dependencias del Frontend ──────────────────────────
+echo [INFO] Verificando dependencias del Frontend...
+cd /d "%FRONTEND_DIR%"
+where npm >nul 2>&1
+if not errorlevel 1 (
+    if not exist "node_modules\" (
+        echo [INFO] Descargando dependencias de Node ^(npm install^)...
+        call npm install
+    )
+) else (
+    echo [WARNING] npm no encontrado. No se puede compilar el frontend automaticamente.
+)
+cd /d "%PROJECT_DIR%"
+
 REM ── 4. Verificar que existe el .env ─────────────────────────
 if not exist "%BACKEND_DIR%\.env" (
     echo [ERROR] No se encontro backend\.env
@@ -57,7 +71,9 @@ if not exist "%BACKEND_DIR%\.env" (
 
 REM ── 5. Iniciar Frontend en segundo plano ────────────────────
 echo [INFO] Iniciando servidor de Frontend en http://localhost:3001 ...
-start "BI Frontend" /min "%PYTHON_BIN%" -m http.server 3001 --directory "%FRONTEND_DIR%"
+cd /d "%FRONTEND_DIR%"
+start "BI Frontend" /min cmd /c "npm run dev -- --port 3001"
+cd /d "%PROJECT_DIR%"
 
 REM ── 6. Iniciar Backend ──────────────────────────────────────
 echo [INFO] Iniciando Backend FastAPI en http://localhost:8000 ...
