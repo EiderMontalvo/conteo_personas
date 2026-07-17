@@ -171,9 +171,9 @@ select {
   padding: .55rem .75rem;
   border-radius: var(--r-sm);
   color: var(--text-muted);
-  font-size: .825rem;
+  font-size: .95rem;
   font-weight: 500;
-  transition: all .15s ease;
+  transition: background .15s ease, color .15s ease;
   border: none;
   background: transparent;
   width: 100%;
@@ -450,13 +450,14 @@ select {
 .kpi-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 0.85rem 1rem;
+  border-radius: var(--r-xl);
+  padding: 1.25rem 1.5rem;
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow .2s, transform .2s;
+  transition: box-shadow .2s, transform .2s, border-color .2s;
   position: relative;
   overflow: hidden;
 }
@@ -514,63 +515,32 @@ select {
   }
 }
 
-.kpi-icon-wrap {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--r);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.kpi-icon-wrap.i-amber {
-  background: var(--amber-soft);
-  color: var(--amber-dark);
-}
-
-.kpi-icon-wrap.i-teal {
-  background: var(--teal-soft);
-  color: var(--teal-dark);
-}
-
-.kpi-icon-wrap.i-green {
-  background: var(--green-soft);
-  color: var(--green);
-}
-
-.kpi-icon-wrap.i-red {
-  background: var(--red-soft);
-  color: var(--red);
-}
-
-.kpi-icon-wrap.i-purple {
-  background: var(--purple-soft);
-  color: var(--purple);
-}
-
 .kpi-body {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .kpi-label {
-  font-size: .75rem;
+  font-size: .8rem;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: .05em;
   font-family: 'JetBrains Mono', monospace;
   display: block;
-  margin-bottom: .2rem;
+  margin-bottom: .25rem;
 }
 
 .kpi-value {
-  font-size: 2.1rem;
+  font-size: 1.75rem;
   font-weight: 800;
   color: var(--text);
-  line-height: 1;
-  display: block;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 }
 
 .kpi-badge {
@@ -606,8 +576,7 @@ select {
 
 /* Aforo progress */
 .aforo-body {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
 }
 
 .aforo-row {

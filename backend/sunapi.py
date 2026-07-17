@@ -235,6 +235,11 @@ class SunAPIClient:
 
         for msg in notifications:
             try:
+                # Filtrar eventos de inicialización
+                prop_op = getattr(msg.Message, "PropertyOperation", None) or msg.Message.get("PropertyOperation") if hasattr(msg.Message, "get") else None
+                if prop_op == "Initialized":
+                    continue
+
                 msg_el = msg.Message._value_1
                 if msg_el is None:
                     continue

@@ -19,6 +19,17 @@ import { useToast } from '../context/ToastContext'
 const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 const DAY_SHORT = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 
+const formatHour12 = (h) => `${h % 12 || 12} ${h >= 12 ? 'PM' : 'AM'}`
+
+const formatCompact = (num) => {
+  if (num === null || num === undefined) return '—';
+  const absNum = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  if (absNum >= 1000000) return sign + (absNum / 1000000).toFixed(1).replace(/\.0$/, '').replace('.', ',') + 'M';
+  if (absNum >= 1000) return sign + (absNum / 1000).toFixed(1).replace(/\.0$/, '').replace('.', ',') + 'k';
+  return num.toString();
+}
+
 //Custom Tooltip
 const CT = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
@@ -38,19 +49,13 @@ const CT = ({ active, payload, label }) => {
 }
 
 //KPI pequeño
-function KpiSm({ label, value, colorClass, sub, icon: Icon }) {
-  const iconColorMap = { amber: 'i-amber', teal: 'i-teal', green: 'i-green', red: 'i-red', purple: 'i-purple' }
+function KpiSm({ label, value, colorClass, sub }) {
   const textColors = { amber: 'var(--amber-dark)', teal: 'var(--teal-dark)', green: 'var(--green)', red: 'var(--red)', purple: 'var(--purple)' }
   return (
-    <div className={`kpi-card`} style={{ padding: '1rem 1.25rem' }}>
-      {Icon && (
-        <div className={`kpi-icon-wrap ${iconColorMap[colorClass] || ''}`}>
-          <Icon size={20} />
-        </div>
-      )}
+    <div className={`kpi-card k-${colorClass}`} style={{ padding: '1.25rem' }}>
       <div className="kpi-body">
         <span className="kpi-label">{label}</span>
-        <span className="kpi-value" style={{ color: textColors[colorClass] || 'var(--text)' }}>{value ?? '—'}</span>
+        <span className="kpi-value" title={value} style={{ color: textColors[colorClass] || 'var(--text)' }}>{value ?? '—'}</span>
         {sub && <span className="kpi-badge neutral" style={{ marginTop: '0.4rem', alignSelf: 'flex-start' }}>{sub}</span>}
       </div>
     </div>
@@ -89,7 +94,7 @@ function Heatmap({ data }) {
         <thead>
           <tr>
             <th>Día</th>
-            {hours.map(h => <th key={h}>{String(h).padStart(2, '0')}h</th>)}
+            {hours.map(h => <th key={h}>{formatHour12(h)}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -105,7 +110,7 @@ function Heatmap({ data }) {
                   return (
                     <td
                       key={h}
-                      title={`${v} cruces — ${String(h).padStart(2, '0')}:00`}
+                      title={`${v} cruces — ${formatHour12(h)}`}
                       style={v > 0 ? { background: cellColor(v), color: textColor(v), fontWeight: 600, textAlign: 'center' } : { textAlign: 'center' }}
                     >
                       {v > 0 ? v : ''}
@@ -206,7 +211,7 @@ export default function Analytics() {
     byHour[h] = (byHour[h] || 0) + (e.in_count || 0) + (e.out_count || 0)
   })
   const peakEntry = Object.entries(byHour).sort((a, b) => b[1] - a[1])[0]
-  const horaPico = peakEntry ? `${String(peakEntry[0]).padStart(2, '0')}:00h` : null
+  const horaPico = peakEntry ? formatHour12(parseInt(peakEntry[0], 10)) : null
 
   //Días únicos
   const daysSet = new Set(rows.map(e => e.timestamp.slice(0, 10)))
@@ -232,7 +237,7 @@ export default function Analytics() {
   const hourBarData = Array.from({ length: 24 }, (_, i) => {
     const insArr = rows.filter(e => new Date(e.timestamp).getHours() === i).reduce((s, e) => s + (e.in_count || 0), 0)
     const outArr = rows.filter(e => new Date(e.timestamp).getHours() === i).reduce((s, e) => s + (e.out_count || 0), 0)
-    return { hora: `${String(i).padStart(2, '0')}h`, Entradas: insArr, Salidas: outArr, total: insArr + outArr }
+    return { hora: formatHour12(i), Entradas: insArr, Salidas: outArr, total: insArr + outArr }
   })
   const maxHourT = Math.max(...hourBarData.map(d => d.total), 1)
 
@@ -331,11 +336,11 @@ export default function Analytics() {
 
         {/*KPIs*/}
         <div className="kpi-grid">
-          <KpiSm label="Entradas totales" value={rows.length ? totalIn.toLocaleString('es-PE') : '—'} colorClass="green" sub="Personas" icon={LogIn} />
-          <KpiSm label="Salidas totales" value={rows.length ? totalOut.toLocaleString('es-PE') : '—'} colorClass="red" sub="Personas" icon={LogOut} />
-          <KpiSm label="Flujo neto" value={rows.length ? (netFlow >= 0 ? '+' : '') + netFlow.toLocaleString('es-PE') : '—'} colorClass="teal" sub="Entradas - Salidas" icon={ArrowUpDown} />
-          <KpiSm label="Hora pico" value={rows.length && horaPico ? horaPico : '—'} colorClass="amber" sub={horaPico ? `${peakEntry?.[1]} cruces` : ''} icon={Clock} />
-          <KpiSm label="Día más activo" value={rows.length && topDay ? topDay.name : '—'} colorClass="purple" sub={topDay ? `${topDay.date} / ${topDay.count} cruces` : ''} icon={TrendingUp} />
+          <KpiSm label="Entradas totales" value={rows.length ? totalIn.toLocaleString('es-PE') : '—'} colorClass="green" sub="Personas" />
+          <KpiSm label="Salidas totales" value={rows.length ? totalOut.toLocaleString('es-PE') : '—'} colorClass="red" sub="Personas" />
+          <KpiSm label="Flujo neto" value={rows.length ? (netFlow >= 0 ? '+' : '') + netFlow.toLocaleString('es-PE') : '—'} colorClass="teal" sub="Entradas - Salidas" />
+          <KpiSm label="Hora pico" value={rows.length && horaPico ? horaPico : '—'} colorClass="amber" sub={horaPico ? `${peakEntry?.[1]} cruces` : ''} />
+          <KpiSm label="Día más activo" value={rows.length && topDay ? topDay.name : '—'} colorClass="purple" sub={topDay ? `${topDay.date} / ${topDay.count} cruces` : ''} />
         </div>
 
         {/*Graficos fila 1: barras hora + línea diaria*/}
@@ -352,7 +357,7 @@ export default function Analytics() {
                 <BarChart data={hourBarData} margin={{ top: 5, right: 10, left: -15, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} vertical={false} />
                   <XAxis dataKey="hora" tick={{ fontSize: 10, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis tickFormatter={formatCompact} tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip content={<CT />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="Entradas" fill={"var(--teal)"} radius={[4, 4, 0, 0]} />
@@ -373,7 +378,7 @@ export default function Analytics() {
                 <LineChart data={lineData} margin={{ top: 5, right: 15, left: -15, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} />
                   <XAxis dataKey="dia" tick={{ fontSize: 10, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis tickFormatter={formatCompact} tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip content={<CT />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                   <Line type="monotone" dataKey="Entradas" stroke={"var(--teal)"} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
@@ -424,7 +429,7 @@ export default function Analytics() {
                 <BarChart data={dowData} margin={{ top: 5, right: 10, left: -15, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} vertical={false} />
                   <XAxis dataKey="dia" tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis tickFormatter={formatCompact} tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip content={<CT />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="Entradas" fill={"var(--teal)"} radius={[4, 4, 0, 0]} />

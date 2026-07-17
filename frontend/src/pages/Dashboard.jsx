@@ -30,6 +30,17 @@ const MAX_LIVE = 40
 const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 const DAY_SHORT = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
 
+const formatHour12 = (h) => `${h % 12 || 12} ${h >= 12 ? 'PM' : 'AM'}`
+
+const formatCompact = (num) => {
+  if (num === null || num === undefined) return '—';
+  const absNum = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  if (absNum >= 1000000) return sign + (absNum / 1000000).toFixed(1).replace(/\.0$/, '').replace('.', ',') + 'M';
+  if (absNum >= 1000) return sign + (absNum / 1000).toFixed(1).replace(/\.0$/, '').replace('.', ',') + 'k';
+  return num.toString();
+}
+
 // ─── Custom Tooltip ───────────────────────────────────────────
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
@@ -49,15 +60,12 @@ const CustomTooltip = ({ active, payload, label }) => {
 }
 
 // ─── KPI Card ─────────────────────────────────────────────────
-function KpiCard({ title, value, icon: Icon, colorClass, badge, badgeType }) {
+function KpiCard({ title, value, colorClass, badge, badgeType }) {
   return (
     <div className={`kpi-card k-${colorClass}`}>
-      <div className={`kpi-icon-wrap i-${colorClass}`}>
-        <Icon size={20} />
-      </div>
       <div className="kpi-body">
         <span className="kpi-label">{title}</span>
-        <span className="kpi-value">{value ?? '—'}</span>
+        <span className="kpi-value" title={value}>{value ?? '—'}</span>
         {badge && (
           <span className={`kpi-badge ${badgeType || 'neutral'}`}>{badge}</span>
         )}
@@ -70,9 +78,6 @@ function KpiCard({ title, value, icon: Icon, colorClass, badge, badgeType }) {
 function AforoCard({ actual, limite, pct, alertActive }) {
   return (
     <div className={`kpi-card k-amber ${alertActive ? 'alert-pulse' : ''}`}>
-      <div className="kpi-icon-wrap i-amber">
-        <Users size={20} />
-      </div>
       <div className="aforo-body">
         <span className="kpi-label">Aforo Actual</span>
         <div className="aforo-row">
@@ -176,7 +181,7 @@ export default function Dashboard() {
   const horaPico = (() => {
     const totals = todayHourly.map((h, i) => ({ h: i, t: h.in + h.out }))
     const peak   = totals.reduce((a, b) => b.t > a.t ? b : a, { h: 0, t: 0 })
-    return peak.t > 0 ? { hora: `${String(peak.h).padStart(2,'0')}:00h`, total: peak.t } : null
+    return peak.t > 0 ? { hora: formatHour12(peak.h), total: peak.t } : null
   })()
 
   // ─── Día más activo ──────────────────────────────────────────
@@ -193,7 +198,7 @@ export default function Dashboard() {
 
   // ─── Datos para barras por hora ──────────────────────────────
   const hourBarData = todayHourly.map((h, i) => ({
-    hora: `${String(i).padStart(2,'0')}h`,
+    hora: formatHour12(i),
     Entradas: h.in,
     Salidas:  h.out,
     total:    h.in + h.out,
@@ -249,7 +254,7 @@ export default function Dashboard() {
 
     // Gráfico de línea en vivo (solo cámara activa)
     if (camId === activeCamId || activeCamId === null) {
-      const label = ts.toLocaleTimeString('es-PE', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+      const label = ts.toLocaleTimeString('es-PE', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:true })
       setLivePoints(prev => {
         const next = [...prev, { t: label, Entradas: in_count, Salidas: out_count }]
         return next.length > MAX_LIVE ? next.slice(-MAX_LIVE) : next
@@ -317,7 +322,7 @@ export default function Dashboard() {
           onChange={e => setActiveCamId(parseInt(e.target.value, 10))}
         >
           {cameras.map(c => (
-            <option key={c.id} value={c.id}>[{c.id}] {c.name}</option>
+            <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
       </Topbar>
@@ -336,17 +341,17 @@ export default function Dashboard() {
           />
           <KpiCard
             title="Entradas" value={activeState.in.toLocaleString('es-PE')}
-            icon={LogIn} colorClass="green"
+            colorClass="green"
             badge={<><TrendingUp size={11} /> Tiempo real</>} badgeType="up"
           />
           <KpiCard
             title="Salidas" value={activeState.out.toLocaleString('es-PE')}
-            icon={LogOut} colorClass="red"
+            colorClass="red"
             badge={<><Minus size={11} /> Tiempo real</>} badgeType="neutral"
           />
           <KpiCard
             title="Hora Pico (Hoy)" value={horaPico?.hora ?? '—'}
-            icon={Clock} colorClass="amber"
+            colorClass="amber"
             badge={horaPico ? `${horaPico.total.toLocaleString('es-PE')} cruces` : 'sin datos'}
             badgeType="warn"
           />
@@ -388,13 +393,13 @@ export default function Dashboard() {
                 Flujo en Tiempo Real
               </span>
               <div className="period-tabs">
-                {['live','1h','hoy'].map(p => (
+                {['live','1h'].map(p => (
                   <button type="button"
                     key={p}
                     className={`period-tab ${periodTab === p ? 'active' : ''}`}
                     onClick={() => setPeriodTab(p)}
                   >
-                    {p === 'live' ? 'En Vivo' : p === '1h' ? '1 hora' : 'Hoy'}
+                    {p === 'live' ? 'En Vivo' : '1 hora'}
                   </button>
                 ))}
               </div>
@@ -414,7 +419,7 @@ export default function Dashboard() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} />
                   <XAxis dataKey="t" tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis tickFormatter={formatCompact} tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip content={<CustomTooltip />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:12 }} />
                   <Area type="monotone" dataKey="Entradas" stroke={"var(--teal)"} fill="url(#gIn)"  strokeWidth={2} dot={false} />
@@ -477,7 +482,7 @@ export default function Dashboard() {
                 <BarChart data={hourBarData} margin={{ top:5, right:10, left:-15, bottom:0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} vertical={false} />
                   <XAxis dataKey="hora" tick={{ fontSize:10, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis tickFormatter={formatCompact} tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip content={<CustomTooltip />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:12 }} />
                   <Bar dataKey="Entradas" fill={"var(--teal)"}  radius={[4,4,0,0]} />
@@ -499,7 +504,7 @@ export default function Dashboard() {
                 <BarChart data={weekBarData} margin={{ top:5, right:10, left:-15, bottom:0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} vertical={false} />
                   <XAxis dataKey="dia" tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis tickFormatter={formatCompact} tick={{ fontSize:11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip content={<CustomTooltip />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize:12 }} />
                   <Bar dataKey="Entradas" fill={"var(--teal)"}  radius={[4,4,0,0]} />
