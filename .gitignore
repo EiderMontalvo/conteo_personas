@@ -1,14 +1,40 @@
-# .env contiene credenciales sensibles. NUNCA subir al repositorio.
+# Credenciales y configuraciones locales
 .env
+.env.*
+!.env.example
 
 # Caché de Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Node.js
+node_modules/
+dist/
+build/
+npm-debug.log*
 
 # Base de datos local
 *.db
 *.db-shm
 *.db-wal
+*.sqlite3
 
-# Entorno virtual
+# Entorno virtual Python
 venv/
+env/
+.venv/
+
+# Logs
+*.log
+logs/
+
+# Herramientas de agentes e indexación
+.agents/
+.codegraph/
+.gemini/
+
+# OS y editores
+.DS_Store
+.vscode/
+.idea/

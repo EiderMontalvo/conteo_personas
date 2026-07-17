@@ -1132,3 +1132,316 @@ select {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ─── Settings page ─────────────────────────────────────── */
+.settings-top-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+@media (max-width: 900px) { .settings-top-grid { grid-template-columns: 1fr; } }
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+.badge-count {
+  background: var(--amber-soft);
+  color: var(--amber-dark);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.cameras-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+/* ─── Camera card ─────────────────────────────────────── */
+.camera-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+.camera-card:hover { box-shadow: var(--shadow-md); }
+.camera-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.camera-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.camera-ip {
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+.camera-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.camera-card-body {
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.cam-meta-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+}
+.cam-meta-label { color: var(--text-muted); }
+.cam-meta-value { font-weight: 500; color: var(--text); }
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* ─── Modal ───────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  backdrop-filter: blur(2px);
+}
+.modal-box {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalIn 0.18s ease;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.modal-body {
+  padding: 1.25rem;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.modal-footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+/* ─── Form components ─────────────────────────────────── */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.875rem;
+}
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.form-field.span-2 { grid-column: 1 / -1; }
+.form-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.form-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.form-input:focus { border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-border); }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ─── Info banner ─────────────────────────────────────── */
+.info-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-radius: var(--r-sm);
+  padding: 0.6rem 0.875rem;
+  font-size: 0.82rem;
+  border: 1px solid rgba(37,99,235,0.2);
+}
+
+/* ─── Network scanner ─────────────────────────────────── */
+.help-text {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+.scan-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.scan-pulse {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--teal);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+.scan-results { margin-top: 1rem; }
+.scan-found {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+.device-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.device-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 0.65rem 0.875rem;
+  transition: box-shadow 0.15s;
+}
+.device-card:hover { box-shadow: var(--shadow-xs); }
+.device-card.device-added { opacity: 0.55; }
+.device-ip {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+.device-meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+.badge-added {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* ─── Empty / loading states ──────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 1.5rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+.empty-cameras {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.loading-state {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--text-muted);
+  padding: 2rem;
+}
+
+/* ─── Button extras ───────────────────────────────────── */
+.btn-sm { padding: 0.3rem 0.7rem; font-size: 0.78rem; }
+.btn-danger {
+  background: var(--red);
+  color: white;
+  border: none;
+}
+.btn-danger:hover { background: #b91c1c; }
+.btn-primary {
+  background: var(--teal);
+  color: white;
+  border: none;
+}
+.btn-primary:hover { background: var(--teal-dark); }
+.text-blue { color: var(--blue); }
+.text-red  { color: var(--red); }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  border-radius: var(--r-sm);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+.icon-btn:hover { background: var(--border); color: var(--text); }
+
+/* ─── Spin animation ──────────────────────────────────── */
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

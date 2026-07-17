@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from typing import Generator
 
-from config import settings
+from app.core.config import settings
 
 #connect_args solo es necesario para SQLite
 _connect_args = (

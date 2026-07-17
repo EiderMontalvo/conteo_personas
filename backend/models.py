@@ -5,6 +5,7 @@ from database import Base
 class Camera(Base):
     __tablename__ = "cameras"
     id = Column(Integer, primary_key=True, index=True)
+    camera_id = Column(Integer, unique=True, index=True)
     ip_address = Column(String, unique=True, index=True)
     name = Column(String)
     is_active = Column(Boolean, default=True)

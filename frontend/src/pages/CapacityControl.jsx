@@ -70,8 +70,14 @@ export default function CapacityControl() {
             }
 
             return zones.map(zone => {
-              const inCount = zone.cameras.reduce((sum, c) => sum + (camStates[c.id]?.in || 0), 0)
-              const outCount = zone.cameras.reduce((sum, c) => sum + (camStates[c.id]?.out || 0), 0)
+              const inCount = zone.cameras.reduce((sum, c) => {
+                if (c.count_direction === 'out_only') return sum
+                return sum + (camStates[c.id]?.in || 0)
+              }, 0)
+              const outCount = zone.cameras.reduce((sum, c) => {
+                if (c.count_direction === 'in_only') return sum
+                return sum + (camStates[c.id]?.out || 0)
+              }, 0)
               const aforoActual = Math.max(0, inCount - outCount)
               const limite = zone.max_capacity
               const available = Math.max(0, limite - aforoActual)
@@ -108,6 +114,17 @@ export default function CapacityControl() {
                       </span>
                       {available > 0 && <span className="text-[0.65rem] font-semibold text-gray-500">{available} libres</span>}
                     </div>
+                    {zone.isGroup && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-1">
+                        <span className="text-[0.65rem] uppercase font-semibold text-gray-400">Cámaras en esta zona:</span>
+                        {zone.cameras.map(c => (
+                          <div key={c.id} className="text-[0.75rem] text-gray-600 flex justify-between">
+                            <span>• {c.name} {c.count_direction === 'in_only' ? '(Solo Entradas)' : c.count_direction === 'out_only' ? '(Solo Salidas)' : ''}</span>
+                            <span className="text-gray-400">IP: {c.ip_address || 'N/A'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
