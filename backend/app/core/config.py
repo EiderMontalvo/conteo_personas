@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     onvif_unsubscribe: bool = False
     # Backoff de reconexión: 2s, 4s, 8s… hasta este máximo.
     reconnect_max_delay: int = Field(60, ge=2)
+    # Perfil de video SUNAPI para el MJPEG en vivo. Vacío = el MJPEG por defecto,
+    # que en Hanwha suele ser el perfil de grabación (limitado a 2-5 fps).
+    video_profile: Optional[int] = Field(None, ge=1)
 
     # True = no se conecta a cámaras; genera cruces simulados.
     demo_mode: bool = False

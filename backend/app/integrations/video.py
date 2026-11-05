@@ -53,7 +53,11 @@ async def open_mjpeg(ip: str) -> tuple[str, AsyncIterator[bytes]]:
     Lanza VideoUnavailable si no hay forma de obtener imagen.
     """
     client = _client_factory(timeout=httpx.Timeout(settings.onvif_timeout, read=None))
-    params = {"msubmenu": "stream", "action": "view", "Channel": 0, "CodecType": "MJPEG"}
+    params = {"msubmenu": "stream", "action": "view", "Channel": 0}
+    if settings.video_profile:
+        params["Profile"] = settings.video_profile
+    else:
+        params["CodecType"] = "MJPEG"
     try:
         req = client.build_request("GET", _base(ip), params=params)
         resp = await client.send(req, auth=_auth(), stream=True)
