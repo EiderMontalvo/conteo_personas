@@ -54,7 +54,7 @@ El sistema usa una estrategia event-driven para minimizar el espacio en disco:
 |---|---|---|
 | Python | 3.9 | Con opcion "Add to PATH" activada en Windows |
 | Node.js | 18 | Para el frontend React |
-| Camara Hanwha XNO-6120R | Firmware 2.x+ | Con analitica IVA configurada y ONVIF habilitado |
+| Camara Hanwha XNO-6120R | Probado con firmware 1.40.02 | Con analitica IVA configurada y ONVIF habilitado |
 | Navegador | Chrome 90+ / Firefox 88+ | Para el dashboard |
 | Red | LAN | El equipo debe tener acceso directo a las IPs de las camaras |
 
@@ -127,26 +127,56 @@ Una vez iniciado:
 
 ## Configuracion de la camara Hanwha
 
-Estas configuraciones se realizan una sola vez desde la interfaz web de la camara (`http://<ip-camara>`). El sistema no puede realizar estas configuraciones de forma remota.
+Estas configuraciones se realizan una sola vez desde la interfaz web de la camara (`http://<ip-camara>`, menu de engranaje). El sistema no las cambia por si mismo.
 
-### Paso 1 — Configurar la linea virtual IVA
+### Paso 0 — Ubicacion de la camara
 
-1. Ir a **Configuracion > Analiticas > IVA**.
-2. Hacer clic en **Agregar regla** y seleccionar **Cruce de linea (Line Crossing)**.
-3. Dibujar una linea recta que atraviese el area de interes.
-4. Configurar las direcciones: `A a B` como Entrada, `B a A` como Salida.
-5. Verificar que la regla este **Habilitada** y guardar.
+La precision del conteo depende sobre todo de donde esta la camara:
 
-### Paso 2 — Habilitar ONVIF
+- **Recomendado:** encima de la puerta, mirando hacia abajo (cenital o muy inclinada). Cada persona que entra o sale atraviesa la linea de forma limpia y quien pasa por al lado no la toca.
+- **A evitar:** la camara a baja altura mirando de frente a la puerta. Quien cruza se mueve "en profundidad" (hacia la camara o alejandose) y casi no se desplaza en la imagen; ademas, quien camina de lado al fondo hace oscilar su recuadro y genera **cruces falsos o duplicados**.
+- Que nada tape el umbral de la puerta (escritorios, mostradores): es justo donde va la linea.
 
-1. Ir a **Red > ONVIF**.
-2. Habilitar el protocolo ONVIF.
-3. Crear un usuario con el mismo nombre y contrasena que se indicaran en el `.env` (`CAMERA_USER` / `CAMERA_PASS`).
+### Paso 1 — Darle una IP fija
 
-### Paso 3 — Verificar reglas de evento
+Una camara nueva viene en **DHCP**. Si se conecta directo al equipo o a un switch PoE sin servidor DHCP, se queda **sin IP** y ni el *Wisenet IP Installer* ni el sistema la encuentran.
 
-1. Ir a **Evento > Reglas de evento**.
-2. Verificar que la linea virtual este habilitada para notificar eventos ONVIF.
+1. Dale una IP por DHCP (router o servidor DHCP de la red) o con el IP Installer.
+2. En **Basic > IP & Port** cambia el tipo a **Manual (estatica)** con una IP de la misma red que el equipo, p. ej. `192.168.50.100/24` y gateway `192.168.50.1`. Si queda en DHCP sin servidor, la camara pierde la IP al vencer la concesion.
+3. Al primer acceso la camara pide crear la contrasena de `admin`; esa es la que va en `CAMERA_USER` / `CAMERA_PASS`.
+
+### Paso 2 — Configurar la linea virtual IVA
+
+En **Analytics > IVA**, con **Enable IVA** marcado:
+
+1. Pestana **Virtual line**: dibuja la linea **dentro del vano de la puerta**, sin que sus extremos toquen paredes, y donde las personas la atraviesen por completo (sobre el umbral). En **Categories** marca **Crossing** y en **Direction** elige **A↔B** (ambos sentidos).
+2. Pestana **Common**: ajusta el **tamano de objeto**. Si el minimo es demasiado grande (p. ej. 684×879) la camara no detecta a nadie; algo como **Minimum 100×200** y **Maximum** casi toda la imagen funciona bien.
+3. Marca **Overlay > Enable** mientras pruebas: en el video de la camara aparece un recuadro sobre cada persona detectada.
+4. En **Event action settings** no hace falta activar FTP, E-mail ni Record: son acciones opcionales y no afectan al envio de eventos por ONVIF.
+5. **Apply.**
+
+El sistema cuenta como **entrada** el cruce hacia un lado (*left*) y como **salida** el contrario (*right*). Cruza una vez hacia afuera: si sube "Entradas", el sentido esta invertido respecto a tu puerta.
+
+La linea configurada se dibuja **en amarillo sobre el video en vivo** del dashboard (se refresca cada minuto), para comprobar donde esta.
+
+> **Solo un sentido:** si en la camara pones la linea solo en A→B o A←B, la camara ignora el otro sentido y el aforo ("personas dentro") deja de tener sentido. Para contar un solo sentido es mejor dejar la linea en A↔B y usar el **rol** de la camara en el sistema (`in_only` / `out_only`, ver [`backend/README.md`](backend/README.md)).
+
+### Paso 3 — Habilitar ONVIF
+
+1. Ir a **Network > ONVIF** (o equivalente) y verificar que el protocolo este habilitado.
+2. El usuario y la contrasena son los del `.env` (`CAMERA_USER` / `CAMERA_PASS`).
+
+### Paso 4 — Perfil de video para el monitoreo en vivo
+
+El MJPEG por defecto de Hanwha es el **perfil de grabacion**, que la camara limita a 2-5 fps: el video del dashboard se ve entrecortado y atrasado.
+
+1. En **Basic > Video profile** marca **Keep connection when profile properties are changed** (si no, la camara corta todos los videos abiertos cada vez que se edita un perfil).
+2. **Add** un perfil nuevo, p. ej. `LIVE`: codec **MJPEG**, resolucion **800×448**, **8 fps**.
+3. Pon su numero en `backend/.env`: `VIDEO_PROFILE=4` (el numero es su posicion en la lista: MJPEG=1, H.264=2, H.265=3, LIVE=4).
+
+No pidas mas fps de los que la camara puede codificar: si recibe mas de los que entrega, los cuadros se encolan y el video se atrasa varios segundos. Medido en la XNO-6120R: 1280×720 solo sostiene ~6 fps; 800×448 ~10 fps; 640×360 ~15 fps. Deja un margen por debajo de esos valores.
+
+El perfil **H.264 (Default)** lo usan el visor web de la camara y un NVR/VMS; el sistema no lo usa. Cierra el visor web de la camara mientras monitoreas: compite por el procesador con el perfil LIVE.
 
 ---
 
@@ -212,7 +242,12 @@ conteo_personas/
 | Problema | Causa probable | Solucion |
 |---|---|---|
 | Error de conexion con la camara en los logs | IP incorrecta o ONVIF no habilitado | Verificar con `ping <ip>`. Revisar que ONVIF este habilitado en la interfaz web de la camara. |
-| El conteo se queda en cero | Linea virtual IVA no configurada o sin eventos ONVIF | Revisar la configuracion IVA y las reglas de evento en la interfaz de la camara. |
+| El conteo se queda en cero | Linea virtual IVA no configurada, tamano minimo de objeto demasiado grande, o la linea no se atraviesa | Revisar Analytics > IVA (pestanas Virtual line y Common). Activar Overlay para ver si la camara detecta a la persona. |
+| Cuenta de mas o cruces que no ocurrieron | Camara frontal a baja altura, linea a media altura o que toca las paredes | Ver [Paso 0](#paso-0--ubicacion-de-la-camara) y [Paso 2](#paso-2--configurar-la-linea-virtual-iva). Lo ideal es la camara sobre la puerta mirando hacia abajo. |
+| Entradas y salidas invertidas | El sentido *left/right* de la linea es el contrario al de tu puerta | Redibujar la linea con los extremos al reves en la camara. |
+| La camara no aparece en IP Installer ni responde a ping | Esta en DHCP y no hay servidor DHCP en ese cable | Conectarla a una red con DHCP, darle IP y pasarla a estatica ([Paso 1](#paso-1--darle-una-ip-fija)). |
+| Video del dashboard atrasado o a saltos | Se usa el MJPEG de grabacion (2-5 fps) o el perfil pide mas fps de los que la camara codifica | Crear un perfil MJPEG propio con fps sostenibles y poner `VIDEO_PROFILE` ([Paso 4](#paso-4--perfil-de-video-para-el-monitoreo-en-vivo)). |
+| El video se queda congelado | La camara corto el stream | El backend reconecta solo (si no llegan cuadros en 10 s o la camara corta). Marcar "Keep connection when profile properties are changed" en la camara. |
 | "Escanear Red" no encuentra camaras | Firewall bloquea UDP 3702 (WS-Discovery) | El sistema intentara el TCP scan automaticamente. Verificar que las camaras esten encendidas y accesibles desde el equipo. |
 | SmartScreen bloquea `start.bat` | Windows Defender (primer uso) | Clic derecho en `start.bat` > Propiedades > Desbloquear. O hacer clic en "Mas informacion" > "Ejecutar de todas formas". |
 | `python: command not found` en Linux | Python 3 no instalado o no en PATH | `sudo apt install python3 python3-venv python3-pip` |
