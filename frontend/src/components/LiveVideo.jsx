@@ -18,6 +18,57 @@ function Clock() {
   )
 }
 
+const IVA_REFRESH_MS = 60000
+
+/** Líneas virtuales IVA de la cámara; se refrescan para reflejar cambios hechos en la cámara. */
+function useIvaLines(cameraId) {
+  const [iva, setIva] = useState(null)
+  useEffect(() => {
+    if (cameraId == null) return
+    let cancelled = false
+    const load = () =>
+      fetch(`/api/v1/cameras/${cameraId}/iva-lines`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => !cancelled && setIva(body?.data ?? null))
+        .catch(() => !cancelled && setIva(null))
+    load()
+    const t = setInterval(load, IVA_REFRESH_MS)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [cameraId])
+  return iva
+}
+
+/** Dibuja las líneas IVA en el mismo encuadre que el <img> (object-contain). */
+function IvaOverlay({ iva }) {
+  if (!iva?.lines?.length) return null
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 h-full w-full"
+      viewBox={`0 0 ${iva.width} ${iva.height}`}
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
+      {iva.lines.map(({ line, points }) => {
+        const [x1, y1] = points[0]
+        const [x2, y2] = points[points.length - 1]
+        const path = points.map(([x, y]) => `${x},${y}`).join(' ')
+        return (
+          <g key={line}>
+            <polyline points={path} fill="none" stroke="#000" strokeOpacity="0.55" strokeWidth="7" vectorEffect="non-scaling-stroke" />
+            <polyline points={path} fill="none" stroke="#ffd60a" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+            {[[x1, y1], [x2, y2]].map(([x, y], i) => (
+              <circle key={i} cx={x} cy={y} r={iva.width / 160} fill="#ffd60a" stroke="#000" strokeOpacity="0.55" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            ))}
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 /** Video MJPEG en vivo de una cámara a través del backend, con superposición de datos. */
 export default function LiveVideo({ camera, connection, totals }) {
   const boxRef = useRef(null)
@@ -25,6 +76,7 @@ export default function LiveVideo({ camera, connection, totals }) {
   const [phase, setPhase] = useState('loading') // loading | live | error
   const [reason, setReason] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
+  const iva = useIvaLines(camera?.id)
 
   useEffect(() => {
     setPhase('loading')
@@ -75,6 +127,8 @@ export default function LiveVideo({ camera, connection, totals }) {
           onError={onError}
         />
       )}
+
+      {live && <IvaOverlay iva={iva} />}
 
       {!live && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-[#c9cbd1]">
