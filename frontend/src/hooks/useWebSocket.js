@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Directo al backend en el mismo host que sirve la página, para que funcione
-// también desde otro equipo de la red (el proxy WS de Vite no es fiable en dev).
-const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/live`
+// Con Vite (dev) va directo al backend en :8000, porque el proxy WS de Vite no es
+// fiable. Si la página la sirve el propio backend, se usa su mismo host y puerto.
+const DEV_PORTS = ['3000', '3001', '5173']
+const WS_HOST = DEV_PORTS.includes(window.location.port)
+  ? `${window.location.hostname}:8000`
+  : window.location.host
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${WS_HOST}/ws/live`
 const RETRY_MS = 3000
 
 /** Conexión WebSocket persistente con reconexión automática. */
