@@ -64,12 +64,20 @@ El sistema usa una estrategia event-driven para minimizar el espacio en disco:
 
 ### Windows
 
-1. Descarga y descomprime el proyecto.
-2. Asegurate de tener Python 3.9+ instalado con la opcion "Add Python to PATH" activada.
-3. Asegurate de tener Node.js 18+ instalado.
-4. Haz doble clic en `start.bat`.
+1. Descarga o clona el proyecto.
+2. Haz doble clic en `start.bat`.
+3. (Opcional) Haz doble clic en `crear_acceso_directo.bat` para tener el icono **Conteo de Personas** en el escritorio.
 
-El script crea automaticamente el entorno virtual Python, instala todas las dependencias del backend y del frontend, y levanta ambos servicios.
+`start.bat` deja todo listo solo, cada vez que se abre:
+
+- Busca Python 3.9+; si no lo encuentra, ofrece instalarlo con `winget`. Lo mismo con Node.js.
+- Crea el entorno virtual e instala las dependencias **solo si cambiaron** (`requirements.txt`, `package-lock.json`).
+- Compila el dashboard **solo si cambio su codigo**.
+- Si no existe `backend\.env`, lo crea desde la plantilla y lo abre en el Bloc de notas para completarlo.
+- Inicia el servidor y abre el dashboard en el navegador cuando esta listo.
+- Si el sistema ya estaba en marcha, solo abre el navegador.
+
+La primera vez tarda unos minutos (instala dependencias y compila); las siguientes arranca en segundos. **Cerrar la ventana detiene el sistema.**
 
 > Si Windows Defender muestra una advertencia de SmartScreen, haz clic en "Mas informacion" y luego en "Ejecutar de todas formas". Esto ocurre la primera vez porque el archivo `.bat` no tiene firma digital.
 
@@ -112,16 +120,27 @@ Para una referencia completa de todas las variables de configuracion, consulta [
 
 | Sistema operativo | Comando |
 |---|---|
-| Windows | Doble clic en `start.bat` |
-| Linux / macOS | `./start.sh` |
+| Windows | Doble clic en el acceso directo **Conteo de Personas** del escritorio, o en `start.bat` |
+| Linux / macOS | `./start.sh` (hace lo mismo que `start.bat`; Ctrl+C lo detiene) |
 
-Una vez iniciado:
+Todo corre en un solo proceso: el backend sirve tambien el dashboard compilado (`frontend/dist`).
 
 | Servicio | URL |
 |---|---|
-| Dashboard principal | http://localhost:3001 |
-| Ajustes y camaras | http://localhost:3001 (menu lateral) |
+| Dashboard principal | http://localhost:8000 |
+| Ajustes y camaras | http://localhost:8000 (menu lateral) |
 | Documentacion API (Swagger) | http://localhost:8000/docs |
+
+Desde otro equipo de la red: `http://<ip-de-este-equipo>:8000`.
+
+### Modo desarrollo
+
+Para trabajar en el codigo con recarga automatica, en dos terminales:
+
+```bash
+cd backend && ../venv/Scripts/python main.py --reload   # Linux/macOS: ../venv/bin/python
+cd frontend && npm run dev -- --port 3001               # http://localhost:3001
+```
 
 ---
 
@@ -202,8 +221,10 @@ Para cambiar la IP de una camara existente, usar el icono de edicion en cada tar
 
 ```
 conteo_personas/
-├── start.bat                     <- Inicio rapido en Windows
-├── start.sh                      <- Inicio rapido en Linux/macOS
+├── start.bat                     <- Inicio en Windows (prepara todo y abre el dashboard)
+├── crear_acceso_directo.bat      <- Crea el icono "Conteo de Personas" en el escritorio
+├── start.sh                      <- Inicio en Linux/macOS
+├── scripts/                      <- start.ps1, crear_acceso_directo.ps1 y el icono
 ├── README.md                     <- Este archivo
 │
 ├── backend/
@@ -251,8 +272,10 @@ conteo_personas/
 | "Escanear Red" no encuentra camaras | Firewall bloquea UDP 3702 (WS-Discovery) | El sistema intentara el TCP scan automaticamente. Verificar que las camaras esten encendidas y accesibles desde el equipo. |
 | SmartScreen bloquea `start.bat` | Windows Defender (primer uso) | Clic derecho en `start.bat` > Propiedades > Desbloquear. O hacer clic en "Mas informacion" > "Ejecutar de todas formas". |
 | `python: command not found` en Linux | Python 3 no instalado o no en PATH | `sudo apt install python3 python3-venv python3-pip` |
-| `Address already in use` | El puerto 8000 o 3001 esta ocupado | Cerrar la instancia anterior o cambiar el puerto en `start.bat` / `start.sh`. |
-| Dashboard muestra "Desconectado" | Backend no esta corriendo | Verificar que `start.bat` o `start.sh` haya terminado de iniciar sin errores. |
+| `Address already in use` | El puerto 8000 esta ocupado por otro programa | Cerrar ese programa o cambiar `$Port` en `scripts/start.ps1` / `PORT` en `start.sh`. |
+| Dashboard muestra "Desconectado" | Se cerro la ventana del sistema | Volver a abrir el acceso directo o `start.bat`. |
+| El dashboard no refleja un cambio de codigo | El build se salta si no detecta archivos mas nuevos | Borrar `frontend/dist` y volver a abrir `start.bat`. |
+| El acceso directo dejo de funcionar | Se movio la carpeta del proyecto | Ejecutar de nuevo `crear_acceso_directo.bat`. |
 | El Excel exportado esta vacio | Sin datos en el rango de fechas seleccionado | Ampliar el rango de fechas o verificar que haya actividad registrada. |
 | Error al importar Excel | Columnas incorrectas | El archivo debe tener las columnas: `Fecha`, `Hora`, `Entradas`, `Salidas`. |
 | `pip: no se encontro el fichero` | Entorno virtual corrupto | Eliminar la carpeta `venv/` y volver a ejecutar el script de inicio. |

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
@@ -81,6 +82,39 @@ def legacy_settings_get():
     return RedirectResponse("/api/v1/settings")
 
 
+# ── Frontend compilado (npm run build) ───────────────────────────────────────
+# Si existe frontend/dist, el backend sirve el dashboard en el mismo puerto:
+# todo el sistema queda en http://localhost:8000 sin levantar Vite.
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+_NOT_SPA = ("api/", "ws/", "docs", "redoc", "openapi.json")
+
+if (FRONTEND_DIST / "index.html").is_file():
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    if (FRONTEND_DIST / "assets").is_dir():
+        # Los nombres llevan hash: se pueden cachear para siempre.
+        app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def frontend(path: str):
+        if path.startswith(_NOT_SPA):
+            raise HTTPException(status_code=404)
+        file = (FRONTEND_DIST / path).resolve()
+        if path and file.is_file() and FRONTEND_DIST in file.parents:
+            return FileResponse(file)
+        # Rutas de React Router (/analitica, /ajustes...) → index.html, sin caché
+        return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
+
+
 if __name__ == "__main__":
+    import argparse
+
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    parser = argparse.ArgumentParser(description="Servidor del sistema de conteo de personas")
+    parser.add_argument("--reload", action="store_true", help="Recargar al cambiar código (desarrollo)")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run("main:app", host="0.0.0.0", port=args.port, reload=args.reload)
