@@ -33,6 +33,17 @@ logs/
 .agents/
 .codegraph/
 .gemini/
+.github/
+
+# Configuración local de opencode (agentes, prompts, settings)
+.opencode/
+opencode.json
+opencode.jsonc
+
+# Documentación solo para agentes (no viaja al remoto)
+AGENTS.md
+backend/AGENTS.md
+frontend/AGENTS.md
 
 # OS y editores
 .DS_Store

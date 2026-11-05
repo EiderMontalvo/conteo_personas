@@ -1,12 +1,8 @@
-"""
-app/repositories/camera_repo.py
---------------------------------
-Repository específico para el modelo Camera + CameraState.
-Único lugar que hace SQL sobre estas tablas.
-"""
+"""Acceso a datos de Camera y CameraState."""
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
@@ -18,12 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 class CameraRepository(GenericRepository[Camera]):
-    """Acceso a datos para cámaras."""
-
     def __init__(self) -> None:
         super().__init__(Camera)
-
-    # ── Consultas específicas ──────────────────────────────────────
 
     def get_by_camera_id(self, db: Session, camera_id: int) -> Optional[Camera]:
         """Busca por el índice lógico (camera_id), no por PK de BD."""
@@ -33,11 +25,10 @@ class CameraRepository(GenericRepository[Camera]):
         return db.query(Camera).filter(Camera.ip_address == ip).first()
 
     def get_active(self, db: Session) -> List[Camera]:
-        """Devuelve solo las cámaras activas (is_active=True)."""
         return db.query(Camera).filter(Camera.is_active == True).all()  # noqa: E712
 
     def next_camera_index(self, db: Session) -> int:
-        """Devuelve el próximo índice lógico disponible (0, 1, 2...)."""
+        """Menor índice lógico libre (rellena huecos)."""
         cameras = db.query(Camera.camera_id).all()
         existing = {c.camera_id for c in cameras}
         idx = 0
@@ -47,9 +38,8 @@ class CameraRepository(GenericRepository[Camera]):
 
     def seed_from_env(self, db: Session, env_cameras: list[dict]) -> None:
         """
-        Inserta cámaras desde el .env SOLO si la tabla está completamente vacía.
-        Permite que el .env funcione como configuración inicial sin sobrescribir
-        los cambios hechos desde el frontend.
+        Solo siembra si la tabla está vacía: el .env es la configuración inicial
+        y no debe pisar los cambios hechos desde el frontend.
         """
         if db.query(Camera).count() > 0:
             logger.debug("Tabla cameras ya tiene datos — seed omitido.")
@@ -58,8 +48,6 @@ class CameraRepository(GenericRepository[Camera]):
             db.add(Camera(**cam_data))
         db.commit()
         logger.info("Semilla de %d cámara(s) desde .env aplicada.", len(env_cameras))
-
-    # ── Estado en tiempo real ──────────────────────────────────────
 
     def get_state(self, db: Session, camera_id: int) -> Optional[CameraState]:
         return db.query(CameraState).filter(CameraState.camera_id == camera_id).first()
@@ -72,8 +60,8 @@ class CameraRepository(GenericRepository[Camera]):
         total_in: int,
         total_out: int,
         status: str,
+        last_update: Optional[datetime] = None,
     ) -> CameraState:
-        """Crea o actualiza el estado en tiempo real de una cámara."""
         state = self.get_state(db, camera_id)
         if state is None:
             state = CameraState(camera_id=camera_id)
@@ -82,10 +70,11 @@ class CameraRepository(GenericRepository[Camera]):
         state.total_in = total_in
         state.total_out = total_out
         state.status = status
+        if last_update is not None:
+            state.last_update = last_update
         db.commit()
         db.refresh(state)
         return state
 
 
-# Instancia singleton para inyectar por dependencia
 camera_repo = CameraRepository()

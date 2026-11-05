@@ -1,14 +1,6 @@
-"""
-app/services/env_writer.py
---------------------------
-Escritura atómica del archivo .env cuando se modifican cámaras desde el frontend.
-El usuario nunca toca el .env — este servicio lo mantiene sincronizado con la BD.
+"""Mantiene las entradas CAMERA_{n}_* del .env sincronizadas con la BD.
 
-Estrategia de escritura atómica:
-  1. Leer el .env actual línea a línea.
-  2. Modificar solo las líneas CAMERA_{n}_* afectadas.
-  3. Escribir en .env.tmp.
-  4. rename(.env.tmp → .env) — operación atómica en el SO.
+Escribe en .env.tmp y hace os.replace(), que es atómico, para no corromper el .env.
 """
 from __future__ import annotations
 
@@ -20,21 +12,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Patrón para líneas CAMERA_{n}_*
 _CAMERA_KEY_RE = re.compile(r"^(#\s*)?CAMERA_(\d+)_(\w+)\s*=", re.IGNORECASE)
 
 
 class EnvWriter:
-    """
-    Gestiona las entradas CAMERA_{n}_* en el archivo .env.
-    Todas las escrituras son atómicas para evitar corrupción ante errores.
-    """
-
     def __init__(self, env_path: Path) -> None:
         self._env_path = env_path
         self._tmp_path = env_path.with_suffix(".env.tmp")
-
-    # ── API pública ────────────────────────────────────────────────
 
     def set_camera(
         self,
@@ -45,10 +29,7 @@ class EnvWriter:
         role: str = "both",
         group: Optional[str] = None,
     ) -> None:
-        """
-        Crea o actualiza las entradas CAMERA_{index}_* en el .env.
-        Si el índice no existía, agrega las líneas al final.
-        """
+        """Las claves que no existían se añaden al final del .env."""
         lines = self._read_lines()
         updates = {
             f"CAMERA_{index}_IP": ip,
@@ -60,7 +41,6 @@ class EnvWriter:
 
         lines, touched_keys = self._apply_updates(lines, index, updates)
 
-        # Agregar al final las claves que no estaban
         for key, value in updates.items():
             if key not in touched_keys:
                 lines.append(f"{key}={value}\n")
@@ -69,7 +49,7 @@ class EnvWriter:
         logger.info("EnvWriter: cámara %d actualizada en .env (ip=%s, name=%s).", index, ip, name)
 
     def remove_camera(self, index: int) -> None:
-        """Comenta las líneas CAMERA_{index}_* en el .env (no las borra)."""
+        """Comenta las líneas CAMERA_{index}_* (no las borra)."""
         lines = self._read_lines()
         result = []
         for line in lines:
@@ -80,8 +60,6 @@ class EnvWriter:
                 result.append(line)
         self._write_atomic(result)
         logger.info("EnvWriter: cámara %d comentada en .env.", index)
-
-    # ── Internos ───────────────────────────────────────────────────
 
     def _read_lines(self) -> list[str]:
         if not self._env_path.exists():
@@ -94,16 +72,12 @@ class EnvWriter:
         index: int,
         updates: dict[str, str],
     ) -> tuple[list[str], set[str]]:
-        """
-        Reemplaza inline las líneas que coincidan con las claves en `updates`.
-        Devuelve las líneas modificadas y el set de claves ya procesadas.
-        """
+        """Reemplaza en su sitio las claves de `updates`; devuelve también las ya escritas."""
         touched: set[str] = set()
         result = []
         for line in lines:
             m = _CAMERA_KEY_RE.match(line)
             if m and int(m.group(2)) == index:
-                # Extraer la clave completa (ej. CAMERA_0_IP)
                 key = f"CAMERA_{index}_{m.group(3).upper()}"
                 if key in updates:
                     result.append(f"{key}={updates[key]}\n")
@@ -113,6 +87,5 @@ class EnvWriter:
         return result, touched
 
     def _write_atomic(self, lines: list[str]) -> None:
-        """Escribe en .env.tmp y luego hace rename atómico."""
         self._tmp_path.write_text("".join(lines), encoding="utf-8")
-        os.replace(self._tmp_path, self._env_path)  # rename atómico
+        os.replace(self._tmp_path, self._env_path)

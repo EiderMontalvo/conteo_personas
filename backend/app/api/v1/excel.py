@@ -1,13 +1,7 @@
-"""
-app/api/v1/excel.py
---------------------
-Endpoints de exportación e importación de Excel.
-La lógica de generación/parseo vive en ExcelService.
-"""
+"""Endpoints de exportación e importación de Excel (la lógica vive en excel_service)."""
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
@@ -15,28 +9,15 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 import database
+from app.core.config import settings
+from app.core.dates import end_of_day_inclusive, parse_date
 from app.repositories.event_repo import event_repo
 from app.repositories.camera_repo import camera_repo
-from app.core.config import settings
 from app.schemas.common import ApiResponse
 from app.services.excel_service import build_excel, parse_excel
-from app.models.counting import CountingEvent
 
 router = APIRouter(prefix="/excel", tags=["Excel"])
 logger = logging.getLogger(__name__)
-
-
-def _db():
-    yield from database.get_db()
-
-
-def _parse_date(date_str: Optional[str]) -> Optional[datetime]:
-    if not date_str:
-        return None
-    try:
-        return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
 
 
 @router.get(
@@ -50,12 +31,10 @@ def export_excel(
     group: Optional[str] = Query(None, description="Grupo lógico"),
     date_from: Optional[str] = Query(None, description="Fecha inicio YYYY-MM-DD"),
     date_to: Optional[str] = Query(None, description="Fecha fin YYYY-MM-DD (inclusive)"),
-    db: Session = Depends(_db),
+    db: Session = Depends(database.get_db),
 ):
-    dt_from = _parse_date(date_from)
-    dt_to = _parse_date(date_to)
-    if dt_to:
-        dt_to = dt_to + timedelta(days=1)
+    dt_from = parse_date(date_from)
+    dt_to = end_of_day_inclusive(parse_date(date_to))  # inclusive
 
     events = event_repo.get_for_export(
         db,
@@ -89,7 +68,7 @@ def export_excel(
 )
 async def import_excel(
     file: UploadFile = File(..., description="Archivo .xlsx"),
-    db: Session = Depends(_db),
+    db: Session = Depends(database.get_db),
 ):
     if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
         return ApiResponse.fail("Solo se aceptan archivos .xlsx o .xlsm")
@@ -107,15 +86,26 @@ async def import_excel(
     except ValueError as exc:
         return ApiResponse.fail(str(exc))
 
-    for rec in records:
-        db.add(CountingEvent(
-            camera_id=rec["camera_id"],
-            in_count=rec["in_count"],
-            out_count=rec["out_count"],
-            event_type="imported",
-            location_group=rec["location_group"],
-            timestamp=rec["timestamp"],
-        ))
-    db.commit()
+    result = event_repo.add_many_imported(db, records)
 
-    return ApiResponse.success({"inserted": len(records), "errors": errors[:20]})
+    return ApiResponse.success({
+        "inserted": result["inserted"],
+        "updated":  result["updated"],
+        "errors":   errors[:20],
+    })
+
+
+@router.post(
+    "/purge-duplicates",
+    response_model=ApiResponse[dict],
+    summary="Eliminar duplicados de registros importados",
+    description=(
+        "Limpia registros 'imported' duplicados en la BD (mismo camera_id y "
+        "timestamp al segundo). Conserva el más antiguo y elimina el resto. "
+        "Usar una sola vez para sanear datos previos al sistema de upsert."
+    ),
+)
+def purge_duplicates(db: Session = Depends(database.get_db)):
+    deleted = event_repo.purge_imported_duplicates(db)
+    return ApiResponse.success({"deleted": deleted})
+

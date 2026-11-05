@@ -1,137 +1,120 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { SignIn, SignOut, UsersThree } from '@phosphor-icons/react'
 import { api } from '../hooks/useApi'
-import { useWebSocket } from '../hooks/useWebSocket'
-import Topbar from '../components/Topbar'
-import { Users, AlertTriangle, ShieldCheck } from 'lucide-react'
+import { useLive } from '../context/LiveContext'
+import { agruparPorZona, estadoAforo } from '../utils/capacity'
+import { formatNumber } from '../utils/format'
+import { Card, EmptyState, PageHeader, Ring, Skeleton, StatusText } from '../components/ui'
+import { capacityMeta } from '../components/theme'
+
+const ORDER = { 'Crítico': 0, Advertencia: 1, Normal: 2 }
+
+function SpaceCard({ space }) {
+  const meta = capacityMeta(space.status)
+  const over = space.people_inside - space.max_capacity
+  return (
+    <Card className="flex flex-col p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-[17px] font-bold">{space.name}</h2>
+          <p className="text-[13px] text-fg-2">
+            {space.esGrupo ? `Zona con ${space.cameraIds.length} cámaras` : 'Una cámara'}
+          </p>
+        </div>
+        <StatusText icon={meta.icon} tone={meta.cls}>{space.status}</StatusText>
+      </div>
+
+      <div className="mt-5 flex items-center gap-5">
+        <Ring pct={space.pct} size={112} stroke={11} color={meta.ring} label={`Ocupación ${space.pct} %`}>
+          <span className="display text-[24px] font-extrabold leading-none">{space.pct}%</span>
+        </Ring>
+        <div className="min-w-0">
+          <p className="display text-[32px] font-extrabold leading-none">
+            {formatNumber(space.people_inside)}
+            <span className="ml-1 text-base font-semibold text-fg-2" style={{ fontStretch: '100%' }}>/ {formatNumber(space.max_capacity)}</span>
+          </p>
+          <p className="mt-1.5 text-[13px] text-fg-2">
+            {over > 0 ? `${formatNumber(over)} por encima del límite` : `${formatNumber(space.available)} lugares libres`}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 flex gap-5 border-t border-line pt-4 text-[13px]">
+        <span className="inline-flex items-center gap-1.5 text-fg-2">
+          <SignIn size={16} className="text-accent-strong" aria-hidden="true" />
+          <span className="num font-semibold text-fg">{formatNumber(space.total_in)}</span> entradas hoy
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-fg-2">
+          <SignOut size={16} className="text-out" aria-hidden="true" />
+          <span className="num font-semibold text-fg">{formatNumber(space.total_out)}</span> salidas hoy
+        </span>
+      </div>
+    </Card>
+  )
+}
 
 export default function CapacityControl() {
-  const [cameras, setCameras] = useState([])
-  const [camStates, setCamStates] = useState({})
-  const [settings, setSettings] = useState(null)
-  
+  const { cameras, states, loaded } = useLive()
+  const [thresholds, setThresholds] = useState({ warning: 80, critical: 100 })
+
   useEffect(() => {
-    api.getCameras().then(cams => setCameras(cams)).catch(console.error)
-    // Simulated settings fetch (until implemented fully in API hook)
-    fetch('http://localhost:8000/api/settings')
-      .then(res => res.json())
-      .then(data => setSettings(data))
-      .catch(console.error)
+    api.getSettings()
+      .then((r) => r?.data && setThresholds({ warning: r.data.warning_threshold, critical: r.data.critical_threshold }))
+      .catch(() => {})
   }, [])
 
-  const handleMessage = useCallback((data) => {
-    const { camera_id, in_count, out_count } = data
-    setCamStates(prev => {
-      const current = prev[camera_id] || { in: 0, out: 0 }
-      return {
-        ...prev,
-        [camera_id]: { in: current.in + in_count, out: current.out + out_count }
-      }
-    })
-  }, [])
+  const spaces = cameras.filter((c) => c.role === 'space').map((c) => ({ ...c, ...states[c.camera_id] }))
+  const groups = agruparPorZona(spaces)
+    .map((g) => ({ ...g, ...estadoAforo(g.people_inside, g.max_capacity, thresholds.warning, thresholds.critical) }))
+    .sort((a, b) => ORDER[a.status] - ORDER[b.status] || b.pct - a.pct)
 
-  const { connected } = useWebSocket(handleMessage)
-
-  const warningThreshold = settings?.warning_threshold || 80
-  const criticalThreshold = settings?.critical_threshold || 95
+  const count = (s) => groups.filter((g) => g.status === s).length
+  const people = groups.reduce((s, g) => s + g.people_inside, 0)
 
   return (
     <>
-      <Topbar title="Control de Aforo" subtitle="Monitoreo de ocupación por cámara" connected={connected} />
-      <div className="page-body">
+      <PageHeader
+        title="Aforo"
+        subtitle={`Advertencia desde ${thresholds.warning} % y crítico desde ${thresholds.critical} % del límite. Los más ocupados primero.`}
+      >
+        <Link to="/settings" className="btn-secondary">Cambiar umbrales</Link>
+      </PageHeader>
 
-        
-        <div className="kpi-grid">
-          {(() => {
-            const zonesMap = {}
-            cameras.forEach(cam => {
-              const zoneName = (cam.zone && cam.zone.trim() !== '') ? cam.zone : cam.name
-              if (!zonesMap[zoneName]) {
-                zonesMap[zoneName] = {
-                  id: zoneName,
-                  name: zoneName,
-                  cameras: [],
-                  max_capacity: cam.max_capacity || 100,
-                  isGroup: !!(cam.zone && cam.zone.trim() !== '')
-                }
-              } else {
-                zonesMap[zoneName].max_capacity = Math.max(zonesMap[zoneName].max_capacity, cam.max_capacity || 100)
-              }
-              zonesMap[zoneName].cameras.push(cam)
-            })
-
-            const zones = Object.values(zonesMap)
-
-            if (zones.length === 0) {
-              return (
-                <div className="card text-center text-gray-500" style={{ padding: '3rem', gridColumn: '1 / -1' }}>
-                  No hay cámaras configuradas en la base de datos.
-                </div>
-              )
-            }
-
-            return zones.map(zone => {
-              const inCount = zone.cameras.reduce((sum, c) => {
-                if (c.count_direction === 'out_only') return sum
-                return sum + (camStates[c.id]?.in || 0)
-              }, 0)
-              const outCount = zone.cameras.reduce((sum, c) => {
-                if (c.count_direction === 'in_only') return sum
-                return sum + (camStates[c.id]?.out || 0)
-              }, 0)
-              const aforoActual = Math.max(0, inCount - outCount)
-              const limite = zone.max_capacity
-              const available = Math.max(0, limite - aforoActual)
-              const pct = Math.round((aforoActual / limite) * 100)
-              
-              let status = 'normal'
-              if (pct >= criticalThreshold) status = 'critical'
-              else if (pct >= warningThreshold) status = 'warning'
-
-              const colorClass = status === 'critical' ? 'red' : status === 'warning' ? 'amber' : 'green'
-              const badgeType = status === 'critical' ? 'down' : status === 'warning' ? 'warn' : 'up'
-              const statusText = status === 'critical' ? 'Crítico' : status === 'warning' ? 'Advertencia' : 'Normal'
-              
-              return (
-                <div key={zone.id} className={`kpi-card k-${colorClass} ${status !== 'normal' ? 'alert-pulse' : ''}`}>
-                  <div className={`kpi-icon-wrap i-${colorClass}`}>
-                    <Users size={20} />
-                  </div>
-                  <div className="aforo-body">
-                    <span className="kpi-label">{zone.name}</span>
-                    <div className="aforo-row">
-                      <span className="aforo-value">{aforoActual}</span>
-                      <span className="aforo-limit">/ {limite}</span>
-                    </div>
-                    <div className="aforo-bar">
-                      <div
-                        className={`aforo-fill ${status === 'critical' ? 'danger' : ''}`}
-                        style={{ width: `${Math.min(pct, 100)}%`, background: status === 'normal' ? 'var(--green)' : '' }}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.3rem' }}>
-                      <span className={`kpi-badge ${badgeType}`}>
-                        {status !== 'normal' ? <><AlertTriangle size={11} /> {pct}% — {statusText}</> : <>{pct}% de ocupación</>}
-                      </span>
-                      {available > 0 && <span className="text-[0.65rem] font-semibold text-gray-500">{available} libres</span>}
-                    </div>
-                    {zone.isGroup && (
-                      <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-1">
-                        <span className="text-[0.65rem] uppercase font-semibold text-gray-400">Cámaras en esta zona:</span>
-                        {zone.cameras.map(c => (
-                          <div key={c.id} className="text-[0.75rem] text-gray-600 flex justify-between">
-                            <span>• {c.name} {c.count_direction === 'in_only' ? '(Solo Entradas)' : c.count_direction === 'out_only' ? '(Solo Salidas)' : ''}</span>
-                            <span className="text-gray-400">IP: {c.ip_address || 'N/A'}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })
-          })()}
+      {!loaded ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-[240px]" />)}
         </div>
-      </div>
+      ) : groups.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={UsersThree}
+            title="No hay espacios de aforo"
+            action={<Link to="/settings" className="btn-primary">Ir a Ajustes</Link>}
+          >
+            Crea o edita una cámara con el tipo “Espacio de aforo” y un límite de personas para verla aquí.
+          </EmptyState>
+        </Card>
+      ) : (
+        <>
+          <dl className="mb-5 grid grid-cols-2 overflow-hidden rounded-lg border border-line bg-surface sm:grid-cols-4">
+            {[
+              ['Personas dentro', formatNumber(people), ''],
+              ['Normales', count('Normal'), 'text-ok'],
+              ['En advertencia', count('Advertencia'), 'text-warn'],
+              ['Críticos', count('Crítico'), 'text-danger'],
+            ].map(([label, value, tone], i) => (
+              <div key={label} className={`px-5 py-4 ${i ? 'border-line sm:border-l' : ''} ${i === 2 ? 'border-t sm:border-t-0' : ''} ${i === 3 ? 'border-l border-t sm:border-t-0' : ''} ${i === 1 ? 'border-l' : ''}`}>
+                <dt className="eyebrow">{label}</dt>
+                <dd className={`display mt-1 text-[28px] font-extrabold leading-tight ${tone}`}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="grid gap-4 sm:grid-cols-2 lg:gap-5 xl:grid-cols-3">
+            {groups.map((g) => <SpaceCard key={g.key} space={g} />)}
+          </div>
+        </>
+      )}
     </>
   )
 }

@@ -1,63 +1,34 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
       colors: {
-        amber: {
-          DEFAULT: '#eab308',
-          dark: '#ca8a04',
-          soft: '#fef08a',
-          border: 'rgba(234, 179, 8, .3)'
-        },
-        teal: {
-          DEFAULT: '#0d9488',
-          dark: '#0f766e',
-          soft: '#ccfbf1'
-        },
-        green: {
-          DEFAULT: '#059669',
-          soft: '#d1fae5'
-        },
-        red: {
-          DEFAULT: '#dc2626',
-          soft: '#fee2e2'
-        },
-        purple: {
-          DEFAULT: '#7c3aed',
-          soft: '#ede9fe'
-        },
-        blue: {
-          DEFAULT: '#2563eb',
-          soft: '#dbeafe'
-        },
-        surface: {
-          DEFAULT: '#ffffff',
-          2: '#f8f9fb'
-        },
-        sidebar: '#ffffff',
-        muted: '#6b7280',
-        xmuted: '#9ca3af',
-        body: '#f4f6f8'
+        bg: 'var(--bg)',
+        surface: { DEFAULT: 'var(--surface)', 2: 'var(--surface-2)' },
+        line: { DEFAULT: 'var(--border)', strong: 'var(--border-strong)' },
+        fg: { DEFAULT: 'var(--text)', 2: 'var(--text-2)', 3: 'var(--text-3)' },
+        ink: { DEFAULT: 'var(--ink)', 2: 'var(--ink-2)', fg: 'var(--ink-fg)', muted: 'var(--ink-muted)' },
+        accent: { DEFAULT: 'var(--accent)', strong: 'var(--accent-strong)', soft: 'var(--accent-soft)' },
+        'on-accent': 'var(--on-accent)',
+        hover: 'var(--hover)',
+        track: 'var(--track)',
+        out: 'var(--series-out)',
+        ok: { DEFAULT: 'var(--ok)', soft: 'var(--ok-soft)' },
+        warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },
+        danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
       },
       fontFamily: {
-        sans: ['Outfit', 'system-ui', '-apple-system', 'sans-serif'],
-      },
-      boxShadow: {
-        xs: '0 1px 2px rgba(0, 0, 0, .05)',
-        sm: '0 1px 4px rgba(0, 0, 0, .08), 0 1px 3px rgba(0, 0, 0, .06)',
-        md: '0 4px 12px rgba(0, 0, 0, .10)',
-        lg: '0 10px 30px rgba(0, 0, 0, .12)'
+        sans: ['"Archivo Variable"', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         sm: '6px',
-        DEFAULT: '10px',
+        md: '10px',
         lg: '14px',
-        xl: '18px'
-      }
+      },
+      boxShadow: {
+        float: '0 18px 44px -10px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4)',
+      },
     },
   },
   plugins: [],

@@ -1,461 +1,661 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  BarChart2, TrendingUp, PieChart as PieIcon,
-  CalendarDays, Download, Upload, Search,
-  LogIn, LogOut, Clock, Sun, ArrowUpDown,
-} from 'lucide-react'
-import {
-  BarChart, Bar, LineChart, Line,
-  PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import Topbar from '../components/Topbar'
+import {
+  ArrowDown, ArrowUp, ArrowsClockwise, Broom, CaretLeft, CaretRight, DownloadSimple, Info, MagnifyingGlass, UploadSimple, WarningCircle,
+} from '@phosphor-icons/react'
 import { api } from '../hooks/useApi'
+import { useLive } from '../context/LiveContext'
 import { useToast } from '../context/ToastContext'
+import {
+  daysAgoKey, formatDayKey, formatHour12, formatHourShort, formatNumber, localDayKey, parseDayKey, DAY_NAMES, DAY_SHORT,
+} from '../utils/format'
+import { Card, CardHeader, ChartTooltip, Legend, Modal, PageHeader, Segmented } from '../components/ui'
+import { CATEGORY, CHART_AXIS, CHART_GRID, HEAT, SERIES, CURSOR, TRACK, HEAT_EMPTY } from '../components/theme'
 
-//Colores
+const RANGES = [
+  { value: 'today', label: 'Hoy', from: () => localDayKey(), to: () => localDayKey() },
+  { value: '7d', label: '7 días', from: () => daysAgoKey(6), to: () => localDayKey() },
+  { value: '30d', label: '30 días', from: () => daysAgoKey(29), to: () => localDayKey() },
+  { value: 'custom', label: 'Personalizado' },
+]
+const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]
+const BANDS = [
+  { label: 'Madrugada', from: 0, to: 6 },
+  { label: 'Mañana', from: 6, to: 12 },
+  { label: 'Tarde', from: 12, to: 18 },
+  { label: 'Noche', from: 18, to: 24 },
+]
+const PAGE = 50
+const NO_ROWS = []
 
-const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
-const DAY_SHORT = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+// Conserva filtros y resultados al cambiar de pantalla y volver.
+let cache = null
 
-const formatHour12 = (h) => `${h % 12 || 12} ${h >= 12 ? 'PM' : 'AM'}`
+const shiftDay = (key, days) => {
+  const d = parseDayKey(key)
+  d.setDate(d.getDate() + days)
+  return localDayKey(d)
+}
+const daysBetween = (a, b) => Math.round((parseDayKey(b) - parseDayKey(a)) / 86400000) + 1
 
-const formatCompact = (num) => {
-  if (num === null || num === undefined) return '—';
-  const absNum = Math.abs(num);
-  const sign = num < 0 ? '-' : '';
-  if (absNum >= 1000000) return sign + (absNum / 1000000).toFixed(1).replace(/\.0$/, '').replace('.', ',') + 'M';
-  if (absNum >= 1000) return sign + (absNum / 1000).toFixed(1).replace(/\.0$/, '').replace('.', ',') + 'k';
-  return num.toString();
+/** Días del periodo, incluidos los que no tienen datos (para que los ejes no salten). */
+const dayKeys = (from, to) => {
+  const out = []
+  for (let k = from; k <= to && out.length < 400; k = shiftDay(k, 1)) out.push(k)
+  return out
 }
 
-//Custom Tooltip
-const CT = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null
-  return (
-    <div style={{
-      background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
-      padding: '8px 12px', boxShadow: '0 4px 12px rgba(0,0,0,.1)', fontSize: 12,
-    }}>
-      <p style={{ fontWeight: 600, color: '#111827', marginBottom: 4 }}>{label}</p>
-      {payload.map(p => (
-        <p key={p.dataKey} style={{ color: p.color, margin: '2px 0' }}>
-          {p.name}: <strong>{Number(p.value).toLocaleString('es-PE')}</strong>
-        </p>
-      ))}
-    </div>
-  )
-}
+function summarize(rows) {
+  const byHour = Array.from({ length: 24 }, () => ({ in: 0, out: 0, max: 0 }))
+  const byDay = {}
+  const byDow = Array.from({ length: 7 }, () => ({ in: 0, out: 0 }))
+  const dowHour = Array.from({ length: 7 }, () => Array(24).fill(0))
+  const byCamera = {}
+  const bands = BANDS.map(() => 0)
+  let totalIn = 0
+  let totalOut = 0
+  let maxInside = { v: 0, t: null }
 
-//KPI pequeño
-function KpiSm({ label, value, colorClass, sub }) {
-  const textColors = { amber: 'var(--amber-dark)', teal: 'var(--teal-dark)', green: 'var(--green)', red: 'var(--red)', purple: 'var(--purple)' }
-  return (
-    <div className={`kpi-card k-${colorClass}`} style={{ padding: '1.25rem' }}>
-      <div className="kpi-body">
-        <span className="kpi-label">{label}</span>
-        <span className="kpi-value" title={value} style={{ color: textColors[colorClass] || 'var(--text)' }}>{value ?? '—'}</span>
-        {sub && <span className="kpi-badge neutral" style={{ marginTop: '0.4rem', alignSelf: 'flex-start' }}>{sub}</span>}
-      </div>
-    </div>
-  )
-}
-//Mapa de calor
-function Heatmap({ data }) {
-  if (!data.length) return (
-    <p style={{ color: 'var(--text-muted)', fontSize: '.85rem' }}>
-      Carga datos para ver el mapa de calor.
-    </p>
-  )
-
-  const matrix = {}
-  const hours = Array.from({ length: 24 }, (_, i) => i)
-
-  data.forEach(e => {
-    const d = e.timestamp.slice(0, 10)
-    const h = new Date(e.timestamp).getHours()
-    if (!matrix[d]) matrix[d] = {}
-    matrix[d][h] = (matrix[d][h] || 0) + (e.in_count || 0) + (e.out_count || 0)
-  })
-
-  const days = Object.keys(matrix).sort()
-  const maxVal = Math.max(1, ...days.flatMap(d => hours.map(h => matrix[d][h] || 0)))
-
-  const cellColor = v => {
-    const t = v / maxVal
-    return `rgba(13, 148, 136, ${0.15 + t * 0.85})`
+  for (const e of rows) {
+    const d = new Date(e.timestamp)
+    const key = localDayKey(d)
+    const h = d.getHours()
+    const i = e.in_count || 0
+    const o = e.out_count || 0
+    const inside = e.people_inside ?? 0
+    totalIn += i
+    totalOut += o
+    byHour[h].in += i
+    byHour[h].out += o
+    byHour[h].max = Math.max(byHour[h].max, inside)
+    byDay[key] ??= { in: 0, out: 0, max: 0 }
+    byDay[key].in += i
+    byDay[key].out += o
+    byDay[key].max = Math.max(byDay[key].max, inside)
+    byDow[d.getDay()].in += i
+    byDow[d.getDay()].out += o
+    dowHour[d.getDay()][h] += i + o
+    byCamera[e.camera_id] ??= { in: 0, out: 0 }
+    byCamera[e.camera_id].in += i
+    byCamera[e.camera_id].out += o
+    bands[BANDS.findIndex((b) => h >= b.from && h < b.to)] += i + o
+    if (inside > maxInside.v) maxInside = { v: inside, t: e.timestamp }
   }
-  const textColor = v => (v / maxVal) > 0.45 ? '#ffffff' : '#1f2937'
+
+  const peakHour = byHour.reduce((b, v, h) => (v.in + v.out > b.t ? { h, t: v.in + v.out } : b), { h: null, t: 0 })
+  const topDay = Object.entries(byDay).reduce((b, [k, v]) => (v.in + v.out > b.t ? { k, t: v.in + v.out } : b), { k: null, t: 0 })
+  return { totalIn, totalOut, byHour, byDay, byDow, dowHour, byCamera, bands, peakHour, topDay, maxInside }
+}
+
+function Delta({ now, prev }) {
+  if (prev == null) return <span className="text-fg-3">Sin comparación</span>
+  if (prev === 0) return <span className="text-fg-2">{now ? 'Sin datos antes para comparar' : 'Igual que antes'}</span>
+  const pct = Math.round(((now - prev) / prev) * 100)
+  if (pct === 0) return <span className="text-fg-2">Igual que el periodo anterior</span>
+  const Icon = pct > 0 ? ArrowUp : ArrowDown
+  return (
+    <span className="inline-flex items-center gap-1 text-fg-2">
+      <Icon size={14} weight="bold" aria-hidden="true" className={pct > 0 ? 'text-accent-strong' : 'text-out'} />
+      <span className="num font-semibold text-fg">{Math.abs(pct)} %</span> {pct > 0 ? 'más' : 'menos'} que el periodo anterior
+    </span>
+  )
+}
+
+function Kpi({ label, value, children }) {
+  return (
+    <Card className="p-4 sm:p-5">
+      <p className="eyebrow">{label}</p>
+      <p className="display mt-1.5 truncate text-[28px] font-extrabold leading-tight">{value}</p>
+      <p className="mt-1 min-h-[20px] text-[13px] leading-5 text-fg-2">{children ?? ' '}</p>
+    </Card>
+  )
+}
+
+function ChartBox({ height = 280, children }) {
+  return (
+    <div className="px-2 pb-3 pt-4" style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
+    </div>
+  )
+}
+
+function FlowChart({ rows, stats, days }) {
+  const single = days.length <= 1
+  const short = days.length > 1 && days.length <= 3
+  let data
+  let tickFmt
+  let tipFmt
+
+  if (single) {
+    data = stats.byHour.map((v, h) => ({ x: h, Entradas: v.in, Salidas: v.out }))
+    tickFmt = formatHourShort
+    tipFmt = (h) => `${formatHour12(h)} – ${formatHour12((h + 1) % 24)}`
+  } else if (short) {
+    const buckets = {}
+    for (const k of days) {
+      for (let h = 0; h < 24; h++) {
+        const t = parseDayKey(k).getTime() + h * 3600000
+        buckets[t] = { x: t, Entradas: 0, Salidas: 0 }
+      }
+    }
+    for (const e of rows) {
+      const d = new Date(e.timestamp)
+      d.setMinutes(0, 0, 0)
+      const b = buckets[d.getTime()]
+      if (!b) continue
+      b.Entradas += e.in_count || 0
+      b.Salidas += e.out_count || 0
+    }
+    data = Object.values(buckets).sort((a, b) => a.x - b.x)
+    tickFmt = (t) => `${DAY_SHORT[new Date(t).getDay()]} ${formatHourShort(new Date(t).getHours())}`
+    tipFmt = (t) => `${formatDayKey(localDayKey(new Date(t)))}, ${formatHour12(new Date(t).getHours())}`
+  } else {
+    data = days.map((k) => ({ x: k, Entradas: stats.byDay[k]?.in ?? 0, Salidas: stats.byDay[k]?.out ?? 0 }))
+    tickFmt = formatDayKey
+    tipFmt = formatDayKey
+  }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table className="cam-table">
-        <thead>
-          <tr>
-            <th>Día</th>
-            {hours.map(h => <th key={h}>{formatHour12(h)}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {days.map(d => {
-            const dt = new Date(d + 'T00:00:00')
-            return (
+    <Card className="lg:col-span-8">
+      <CardHeader
+        title={single ? 'Flujo por hora' : short ? 'Flujo hora a hora' : 'Flujo por día'}
+        subtitle={single ? 'Entradas y salidas en cada hora del día' : `${days.length} días`}
+        action={<Legend items={[{ label: 'Entradas', color: SERIES.in }, { label: 'Salidas', color: SERIES.out }]} />}
+      />
+      <ChartBox>
+        {single ? (
+          <AreaChart data={data} margin={{ top: 8, right: 16, left: -6, bottom: 0 }}>
+            <CartesianGrid stroke={CHART_GRID} vertical={false} />
+            <XAxis dataKey="x" tickFormatter={tickFmt} tick={CHART_AXIS} tickLine={false} axisLine={false} interval={2} />
+            <YAxis tick={CHART_AXIS} tickLine={false} axisLine={false} allowDecimals={false} width={52} />
+            <Tooltip content={<ChartTooltip labelFormatter={tipFmt} />} />
+            <Area type="monotone" dataKey="Entradas" stroke={SERIES.in} fill={SERIES.in} fillOpacity={0.1} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Area type="monotone" dataKey="Salidas" stroke={SERIES.out} fill={SERIES.out} fillOpacity={0.06} strokeWidth={2} dot={false} isAnimationActive={false} />
+          </AreaChart>
+        ) : (
+          <LineChart data={data} margin={{ top: 8, right: 16, left: -6, bottom: 0 }}>
+            <CartesianGrid stroke={CHART_GRID} vertical={false} />
+            <XAxis dataKey="x" tickFormatter={tickFmt} tick={CHART_AXIS} tickLine={false} axisLine={false} minTickGap={28} />
+            <YAxis tick={CHART_AXIS} tickLine={false} axisLine={false} allowDecimals={false} width={52} />
+            <Tooltip content={<ChartTooltip labelFormatter={tipFmt} />} />
+            <Line type={short ? 'monotone' : 'linear'} dataKey="Entradas" stroke={SERIES.in} strokeWidth={2} dot={!short && days.length <= 31 && { r: 2.5 }} isAnimationActive={false} />
+            <Line type={short ? 'monotone' : 'linear'} dataKey="Salidas" stroke={SERIES.out} strokeWidth={2} dot={!short && days.length <= 31 && { r: 2.5 }} isAnimationActive={false} />
+          </LineChart>
+        )}
+      </ChartBox>
+    </Card>
+  )
+}
+
+function BandsCard({ bands }) {
+  const total = bands.reduce((s, v) => s + v, 0)
+  const data = BANDS.map((b, i) => ({ name: b.label, value: bands[i], range: `${formatHourShort(b.from)}–${formatHourShort(b.to % 24)}` }))
+  const top = data.reduce((m, d) => (d.value > m.value ? d : m), data[0])
+  return (
+    <Card className="flex flex-col lg:col-span-4">
+      <CardHeader title="Franjas del día" subtitle={total ? `La ${top.name.toLowerCase()} concentra el ${Math.round((top.value / total) * 100)} %` : 'Sin cruces en el periodo'} />
+      <div className="flex flex-1 flex-wrap items-center gap-4 px-5 pb-5 pt-2">
+        <div className="relative h-[170px] w-[170px] shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={total ? data : [{ name: 'vacío', value: 1 }]} dataKey="value" innerRadius={52} outerRadius={80} paddingAngle={total ? 1.5 : 0} stroke="none" isAnimationActive={false}>
+                {total ? data.map((d, i) => <Cell key={d.name} fill={CATEGORY[i]} />) : <Cell fill={TRACK} />}
+              </Pie>
+              {total > 0 && <Tooltip content={<ChartTooltip />} />}
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+            <span className="display text-xl font-extrabold">{formatNumber(total)}</span>
+            <span className="text-xs text-fg-2">cruces</span>
+          </div>
+        </div>
+        <ul className="min-w-[140px] flex-1 space-y-2 text-sm">
+          {data.map((d, i) => (
+            <li key={d.name} className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ background: CATEGORY[i] }} aria-hidden="true" />
+              <span className="flex-1">{d.name} <span className="text-fg-3">{d.range}</span></span>
+              <span className="num font-semibold">{total ? Math.round((d.value / total) * 100) : 0} %</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Card>
+  )
+}
+
+function MaxOccupancyCard({ stats, days }) {
+  const single = days.length <= 1
+  const data = single
+    ? stats.byHour.map((v, h) => ({ x: h, Máximo: v.max }))
+    : days.map((k) => ({ x: k, Máximo: stats.byDay[k]?.max ?? 0 }))
+  const { v, t } = stats.maxInside
+  return (
+    <Card className="lg:col-span-6">
+      <CardHeader
+        title={single ? 'Máximo de personas dentro, por hora' : 'Máximo de personas dentro, por día'}
+        subtitle={t ? `Pico del periodo: ${formatNumber(v)} el ${formatDayKey(localDayKey(new Date(t)))} a las ${new Date(t).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}` : 'Sin lecturas de aforo'}
+      />
+      <ChartBox height={240}>
+        <BarChart data={data} margin={{ top: 8, right: 16, left: -6, bottom: 0 }}>
+          <CartesianGrid stroke={CHART_GRID} vertical={false} />
+          <XAxis dataKey="x" tickFormatter={single ? formatHourShort : formatDayKey} tick={CHART_AXIS} tickLine={false} axisLine={false} minTickGap={20} interval={single ? 2 : 'preserveStartEnd'} />
+          <YAxis tick={CHART_AXIS} tickLine={false} axisLine={false} allowDecimals={false} width={52} />
+          <Tooltip cursor={{ fill: CURSOR }} content={<ChartTooltip labelFormatter={single ? (h) => formatHour12(h) : formatDayKey} />} />
+          {v > 0 && <ReferenceLine y={v} stroke={SERIES.in} strokeDasharray="4 4" strokeOpacity={0.6} />}
+          <Bar dataKey="Máximo" fill={SERIES.out} radius={[2, 2, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+        </BarChart>
+      </ChartBox>
+    </Card>
+  )
+}
+
+function WeekdayCard({ byDow }) {
+  const totals = DOW_ORDER.map((d) => ({ d, in: byDow[d].in, out: byDow[d].out, t: byDow[d].in + byDow[d].out }))
+  const max = Math.max(1, ...totals.map((x) => x.t))
+  return (
+    <Card className="lg:col-span-6">
+      <CardHeader title="Por día de la semana" subtitle="Cruces acumulados en el periodo" action={<Legend items={[{ label: 'Entradas', color: SERIES.in }, { label: 'Salidas', color: SERIES.out }]} />} />
+      <ul className="space-y-3 px-5 pb-5 pt-5">
+        {totals.map(({ d, in: i, out: o, t }) => (
+          <li key={d} className="grid grid-cols-[84px_1fr_64px] items-center gap-3 text-sm">
+            <span className="text-fg-2">{DAY_NAMES[d]}</span>
+            <span className="flex h-3.5 overflow-hidden rounded-[3px] bg-track" aria-hidden="true">
+              <span style={{ width: `${(i / max) * 100}%`, background: SERIES.in }} />
+              <span style={{ width: `${(o / max) * 100}%`, background: SERIES.out }} />
+            </span>
+            <span className="num text-right font-semibold">{formatNumber(t)}</span>
+            <span className="sr-only">{`${DAY_NAMES[d]}: ${i} entradas, ${o} salidas`}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
+function CamerasCompare({ byCamera, cameras }) {
+  const data = cameras
+    .map((c) => ({ name: c.name, Entradas: byCamera[c.camera_id]?.in ?? 0, Salidas: byCamera[c.camera_id]?.out ?? 0 }))
+    .sort((a, b) => b.Entradas + b.Salidas - (a.Entradas + a.Salidas))
+  return (
+    <Card>
+      <CardHeader title="Comparación entre cámaras" subtitle="Entradas y salidas de cada cámara en el periodo" action={<Legend items={[{ label: 'Entradas', color: SERIES.in }, { label: 'Salidas', color: SERIES.out }]} />} />
+      <ChartBox height={Math.max(160, data.length * 48 + 40)}>
+        <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, left: 8, bottom: 0 }} barGap={2}>
+          <CartesianGrid stroke={CHART_GRID} horizontal={false} />
+          <XAxis type="number" tick={CHART_AXIS} tickLine={false} axisLine={false} allowDecimals={false} />
+          <YAxis type="category" dataKey="name" tick={{ ...CHART_AXIS, fill: '#e6e9ee' }} tickLine={false} axisLine={false} width={140} />
+          <Tooltip cursor={{ fill: CURSOR }} content={<ChartTooltip />} />
+          <Bar dataKey="Entradas" fill={SERIES.in} radius={[0, 2, 2, 0]} maxBarSize={16} isAnimationActive={false} />
+          <Bar dataKey="Salidas" fill={SERIES.out} radius={[0, 2, 2, 0]} maxBarSize={16} isAnimationActive={false} />
+        </BarChart>
+      </ChartBox>
+    </Card>
+  )
+}
+
+function Heatmap({ dowHour }) {
+  const max = Math.max(1, ...dowHour.flat())
+  return (
+    <Card>
+      <CardHeader
+        title="Patrón semanal"
+        subtitle="Cruces por día de la semana y hora, sumando todo el periodo"
+        action={
+          <div className="flex items-center gap-2 text-xs text-fg-2" aria-hidden="true">
+            Menos
+            {[0.08, 0.3, 0.55, 0.8, 1].map((a) => <span key={a} className="h-3 w-3 rounded-[2px]" style={{ background: HEAT(a) }} />)}
+            Más
+          </div>
+        }
+      />
+      <div className="relative overflow-x-auto px-5 pb-5 pt-4">
+        <table className="w-full min-w-[760px] table-fixed border-separate" style={{ borderSpacing: 3 }}>
+          <thead>
+            <tr>
+              <th className="w-[92px]"><span className="sr-only">Día</span></th>
+              {Array.from({ length: 24 }, (_, h) => (
+                <th key={h} scope="col" className="num pb-1 text-center text-[11px] font-medium text-fg-3">
+                  {h % 3 === 0 ? formatHourShort(h) : <span className="sr-only">{formatHourShort(h)}</span>}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {DOW_ORDER.map((d) => (
               <tr key={d}>
-                <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
-                  {DAY_SHORT[dt.getDay()]} {d}
-                </td>
-                {hours.map(h => {
-                  const v = matrix[d][h] || 0
-                  return (
-                    <td
-                      key={h}
-                      title={`${v} cruces — ${formatHour12(h)}`}
-                      style={v > 0 ? { background: cellColor(v), color: textColor(v), fontWeight: 600, textAlign: 'center' } : { textAlign: 'center' }}
-                    >
-                      {v > 0 ? v : ''}
-                    </td>
-                  )
-                })}
+                <th scope="row" className="whitespace-nowrap pr-2 text-left text-[13px] font-medium text-fg-2">{DAY_NAMES[d]}</th>
+                {dowHour[d].map((v, h) => (
+                  <td
+                    key={h}
+                    title={`${DAY_NAMES[d]}, ${formatHour12(h)}: ${v} cruces`}
+                    className="h-7 rounded-[3px]"
+                    style={{ background: v ? HEAT(0.1 + (v / max) * 0.9) : HEAT_EMPTY }}
+                  >
+                    <span className="sr-only">{v}</span>
+                  </td>
+                ))}
               </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
+function EventsTable({ rows, cameraNames }) {
+  const [page, setPage] = useState(0)
+  const scrollRef = useRef(null)
+  const active = useMemo(
+    () => rows.filter((e) => (e.in_count || 0) > 0 || (e.out_count || 0) > 0)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
+    [rows],
+  )
+  useEffect(() => setPage(0), [rows])
+  const pages = Math.max(1, Math.ceil(active.length / PAGE))
+  const visible = active.slice(page * PAGE, (page + 1) * PAGE)
+  const go = (p) => {
+    setPage(p)
+    scrollRef.current?.scrollTo({ top: 0 })
+  }
+  const th = 'sticky top-0 z-10 bg-surface-2 py-2.5 font-semibold shadow-[inset_0_-1px_0_var(--border)]'
+
+  return (
+    <Card>
+      <CardHeader title="Eventos" subtitle={`${formatNumber(active.length)} cruces en el periodo, del más reciente al más antiguo`} />
+      {active.length === 0 ? (
+        <p className="px-5 pb-6 pt-4 text-sm text-fg-2">No hay cruces en este periodo.</p>
+      ) : (
+        <>
+          {/* Scroll propio con altura fija: el encabezado queda visible y la página no se alarga */}
+          <div ref={scrollRef} className="relative mt-4 max-h-[480px] overflow-auto border-t border-line" tabIndex={0} aria-label="Tabla de eventos">
+            <table className="w-full min-w-[640px] border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr className="text-left text-[13px] text-fg-2">
+                  <th scope="col" className={`${th} px-5`}>Fecha y hora</th>
+                  <th scope="col" className={`${th} px-3`}>Cámara</th>
+                  <th scope="col" className={`${th} px-3 text-right`}>Entradas</th>
+                  <th scope="col" className={`${th} px-3 text-right`}>Salidas</th>
+                  <th scope="col" className={`${th} px-3 text-right`}>Personas dentro</th>
+                  <th scope="col" className={`${th} px-5`}>Origen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((e) => (
+                  <tr key={e.id} className="hover:bg-hover [&>td]:border-b [&>td]:border-line">
+                    <td className="num whitespace-nowrap px-5 py-2.5">
+                      {new Date(e.timestamp).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })}
+                    </td>
+                    <td className="px-3 py-2.5">{cameraNames[e.camera_id] ?? `Cámara ${e.camera_id}`}</td>
+                    <td className={`num px-3 py-2.5 text-right font-semibold ${e.in_count ? 'text-accent-strong' : 'text-fg-3'}`}>{e.in_count || '—'}</td>
+                    <td className={`num px-3 py-2.5 text-right font-semibold ${e.out_count ? 'text-out' : 'text-fg-3'}`}>{e.out_count || '—'}</td>
+                    <td className="num px-3 py-2.5 text-right">{e.people_inside}</td>
+                    <td className="px-5 py-2.5 text-fg-2">{e.event_type === 'imported' ? 'Importado' : 'Cámara'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3" aria-label="Páginas de eventos">
+            <p className="num text-[13px] text-fg-2">
+              {formatNumber(page * PAGE + 1)}–{formatNumber(Math.min((page + 1) * PAGE, active.length))} de {formatNumber(active.length)}
+            </p>
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn-secondary h-8 text-[13px]" onClick={() => go(page - 1)} disabled={page === 0}>
+                <CaretLeft size={16} aria-hidden="true" /> Anterior
+              </button>
+              <span className="num px-1 text-[13px] text-fg-2">Página {page + 1} de {pages}</span>
+              <button type="button" className="btn-secondary h-8 text-[13px]" onClick={() => go(page + 1)} disabled={page >= pages - 1}>
+                Siguiente <CaretRight size={16} aria-hidden="true" />
+              </button>
+            </div>
+          </nav>
+        </>
+      )}
+    </Card>
   )
 }
 
 export default function Analytics() {
+  const { cameras } = useLive()
   const { addToast } = useToast()
   const importRef = useRef(null)
+  const reqId = useRef(0)
 
-  const [cameras, setCameras] = useState([])
-  const [camSel, setCamSel] = useState('all')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [range, setRange] = useState(cache?.range ?? '7d')
+  const [dateFrom, setDateFrom] = useState(cache?.dateFrom ?? daysAgoKey(6))
+  const [dateTo, setDateTo] = useState(cache?.dateTo ?? localDayKey())
+  const [camSel, setCamSel] = useState(cache?.camSel ?? 'all')
+  const [result, setResult] = useState(cache?.result ?? null)
   const [loading, setLoading] = useState(false)
-  const [rows, setRows] = useState([])   // datos cargados
-  const [subtitle, setSubtitle] = useState('Selecciona un periodo para analizar')
-
-  //Fechas por defecto
-  useEffect(() => {
-    const today = new Date()
-    const weekAgo = new Date(today)
-    weekAgo.setDate(today.getDate() - 7)
-    setDateTo(today.toISOString().slice(0, 10))
-    setDateFrom(weekAgo.toISOString().slice(0, 10))
-  }, [])
+  const [error, setError] = useState(null)
+  const [available, setAvailable] = useState(null)
+  const [confirmPurge, setConfirmPurge] = useState(false)
 
   useEffect(() => {
-    api.getCameras().then(cams => setCameras(cams)).catch(() => { })
-  }, [])
+    cache = { range, dateFrom, dateTo, camSel, result }
+  }, [range, dateFrom, dateTo, camSel, result])
 
-  //Análisis
-  const loadData = async () => {
+  const loadRange = () => api.getHistoricalRange().then((r) => setAvailable(r?.data ?? null)).catch(() => {})
+
+  const filterParams = (from, to, sel = camSel) => {
+    const p = { dateFrom: from, dateTo: to }
+    if (sel.startsWith('cam:')) p.cameraId = Number(sel.slice(4))
+    if (sel.startsWith('zone:')) p.group = sel.slice(5)
+    return p
+  }
+
+  const analyze = async (from = dateFrom, to = dateTo, sel = camSel) => {
+    if (!from || !to || from > to) {
+      setError('Revisa las fechas: la inicial debe ser anterior o igual a la final.')
+      return
+    }
+    const id = ++reqId.current
+    const len = daysBetween(from, to)
+    const prevFrom = shiftDay(from, -len)
+    const prevTo = shiftDay(from, -1)
     setLoading(true)
+    setError(null)
     try {
-      const params = {}
-      if (camSel.startsWith('cam:')) params.cameraId = camSel.slice(4)
-      if (camSel.startsWith('group:')) params.group = camSel.slice(6)
-
-      const json = await api.getHistorical({ ...params, limit: 5000 })
-      let data = (json.data || []).filter(e => e.event_type !== 'hourly_heartbeat')
-      if (dateFrom) data = data.filter(e => e.timestamp.slice(0, 10) >= dateFrom)
-      if (dateTo) data = data.filter(e => e.timestamp.slice(0, 10) <= dateTo)
-
-      if (!data.length) { addToast('Sin datos en el periodo seleccionado', 'warning'); return }
-
-      setRows(data)
-      setSubtitle(`${dateFrom} — ${dateTo}  (${data.length} eventos)`)
-      addToast(`${data.length} eventos cargados`, 'success')
+      const clean = (json) => (json?.data ?? []).filter((e) => e.event_type !== 'hourly_heartbeat')
+      const [cur, prev] = await Promise.all([
+        api.getHistorical({ ...filterParams(from, to, sel), limit: 100000 }),
+        api.getHistorical({ ...filterParams(prevFrom, prevTo, sel), limit: 100000 }).catch(() => null),
+      ])
+      if (id !== reqId.current) return // llegó una respuesta vieja
+      const prevRows = prev ? clean(prev) : null
+      setResult({
+        from, to, rows: clean(cur),
+        prev: prevRows && { from: prevFrom, to: prevTo, in: prevRows.reduce((s, e) => s + (e.in_count || 0), 0), out: prevRows.reduce((s, e) => s + (e.out_count || 0), 0) },
+      })
     } catch (e) {
-      addToast('Error al cargar datos: ' + e.message, 'error')
+      if (id === reqId.current) setError(`No se pudieron cargar los datos: ${e.message}`)
     } finally {
-      setLoading(false)
+      if (id === reqId.current) setLoading(false)
     }
   }
 
-  //Export
-  const exportExcel = () => {
-    const params = { dateFrom, dateTo }
-    if (camSel.startsWith('cam:')) params.cameraId = camSel.slice(4)
-    if (camSel.startsWith('group:')) params.group = camSel.slice(6)
-    window.open(api.exportExcelUrl(params), '_blank')
+  useEffect(() => {
+    loadRange()
+    if (!cache?.result) analyze()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const pickRange = (value) => {
+    setRange(value)
+    const r = RANGES.find((x) => x.value === value)
+    if (!r?.from) return
+    const from = r.from()
+    const to = r.to()
+    setDateFrom(from)
+    setDateTo(to)
+    analyze(from, to)
   }
 
-  //Import
+  const exportExcel = async () => {
+    try {
+      addToast('Preparando el Excel…', 'info')
+      await api.exportExcel(filterParams(dateFrom, dateTo))
+    } catch (e) {
+      addToast(`No se pudo exportar: ${e.message}`, 'error')
+    }
+  }
+
   const importExcel = async (file) => {
     if (!file) return
     try {
-      addToast('Importando datos…', 'info')
+      addToast('Importando…', 'info')
       const json = await api.importExcel(file)
-      if (json.ok) addToast(`${json.inserted} registros importados`, 'success')
-      else addToast('Error: ' + json.error, 'error')
+      const d = json?.data ?? {}
+      const errs = d.errors?.length ? `, ${d.errors.length} filas con error` : ''
+      addToast(`${d.inserted ?? 0} registros nuevos y ${d.updated ?? 0} actualizados${errs}`, d.errors?.length ? 'warning' : 'success')
+      loadRange()
+      analyze()
     } catch (e) {
-      addToast('Error al importar: ' + e.message, 'error')
+      addToast(`No se pudo importar: ${e.message}`, 'error')
     } finally {
       if (importRef.current) importRef.current.value = ''
     }
   }
 
-  //Métricas derivadas
-  const totalIn = rows.reduce((s, e) => s + (e.in_count || 0), 0)
-  const totalOut = rows.reduce((s, e) => s + (e.out_count || 0), 0)
-  const netFlow = totalIn - totalOut
+  const purge = async () => {
+    setConfirmPurge(false)
+    try {
+      const json = await api.purgeDuplicates()
+      const n = json?.data?.deleted ?? 0
+      addToast(n ? `${n} registros importados duplicados eliminados` : 'No había duplicados', n ? 'success' : 'info')
+      if (n) analyze()
+    } catch (e) {
+      addToast(`No se pudo limpiar: ${e.message}`, 'error')
+    }
+  }
 
-  //Hora pico
-  const byHour = {}
-  rows.forEach(e => {
-    const h = new Date(e.timestamp).getHours()
-    byHour[h] = (byHour[h] || 0) + (e.in_count || 0) + (e.out_count || 0)
-  })
-  const peakEntry = Object.entries(byHour).sort((a, b) => b[1] - a[1])[0]
-  const horaPico = peakEntry ? formatHour12(parseInt(peakEntry[0], 10)) : null
-
-  //Días únicos
-  const daysSet = new Set(rows.map(e => e.timestamp.slice(0, 10)))
-
-  //Día más activo
-  const byDay = {}
-  rows.forEach(e => {
-    const d = e.timestamp.slice(0, 10)
-    byDay[d] = (byDay[d] || 0) + (e.in_count || 0) + (e.out_count || 0)
-  })
-  const topDayEntry = Object.entries(byDay).sort((a, b) => b[1] - a[1])[0]
-  const topDay = topDayEntry ? (() => {
-    const dt = new Date(topDayEntry[0] + 'T00:00:00')
-    const dayName = DAY_NAMES[dt.getDay()]
-    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-    const dateFormatted = `${dt.getDate()} ${months[dt.getMonth()]} ${dt.getFullYear()}`
-    return { name: dayName, date: dateFormatted, count: topDayEntry[1] }
-  })() : null
-
-  //Datos para graficos
-
-  //Barras por hora
-  const hourBarData = Array.from({ length: 24 }, (_, i) => {
-    const insArr = rows.filter(e => new Date(e.timestamp).getHours() === i).reduce((s, e) => s + (e.in_count || 0), 0)
-    const outArr = rows.filter(e => new Date(e.timestamp).getHours() === i).reduce((s, e) => s + (e.out_count || 0), 0)
-    return { hora: formatHour12(i), Entradas: insArr, Salidas: outArr, total: insArr + outArr }
-  })
-  const maxHourT = Math.max(...hourBarData.map(d => d.total), 1)
-
-  //Linea diaria
-  const lineData = Object.keys(byDay).sort().map(d => ({
-    dia: d,
-    Total: byDay[d],
-    Entradas: rows.filter(e => e.timestamp.slice(0, 10) === d).reduce((s, e) => s + (e.in_count || 0), 0),
-    Salidas: rows.filter(e => e.timestamp.slice(0, 10) === d).reduce((s, e) => s + (e.out_count || 0), 0),
-  }))
-
-  //Pie
-  const pieData = [
-    { name: 'Entradas', value: totalIn },
-    { name: 'Salidas', value: totalOut },
-  ]
-
-  //Por día de la semana (Lun–Dom)
-  const byDow = new Array(7).fill(null).map(() => ({ in: 0, out: 0 }))
-  rows.forEach(e => {
-    const dow = new Date(e.timestamp).getDay()
-    byDow[dow].in += e.in_count || 0
-    byDow[dow].out += e.out_count || 0
-  })
-  const dowData = [1, 2, 3, 4, 5, 6, 0].map(i => ({
-    dia: DAY_SHORT[i],
-    Entradas: byDow[i].in,
-    Salidas: byDow[i].out,
-    total: byDow[i].in + byDow[i].out,
-  }))
-  const maxDowT = Math.max(...dowData.map(d => d.total), 1)
+  const rows = result?.rows ?? NO_ROWS
+  const stats = useMemo(() => summarize(rows), [rows])
+  const days = useMemo(() => (result ? dayKeys(result.from, result.to) : []), [result])
+  const cameraNames = Object.fromEntries(cameras.map((c) => [c.camera_id, c.name]))
+  const zones = [...new Set(cameras.map((c) => c.zone).filter(Boolean))]
+  const shownCameras = camSel === 'all' ? cameras : cameras.filter((c) => (camSel.startsWith('zone:') ? c.zone === camSel.slice(5) : `cam:${c.camera_id}` === camSel))
+  const net = stats.totalIn - stats.totalOut
+  const prev = result?.prev
 
   return (
     <>
-      <Topbar
-        title="Analítica & Reportes"
-        subtitle={subtitle}
-        connected={true}
-        exportParams={{
-          dateFrom,
-          dateTo,
-          ...(camSel.startsWith('cam:') ? { cameraId: camSel.slice(4) } : {}),
-          ...(camSel.startsWith('group:') ? { group: camSel.slice(6) } : {})
-        }}
+      <PageHeader
+        title="Analítica"
+        subtitle={available?.first_date ? `Hay datos del ${formatDayKey(available.first_date)} al ${formatDayKey(available.last_date)}` : 'Flujo de personas por periodo'}
       >
-        <button type="button" className="btn btn-outline" onClick={() => importRef.current?.click()}>
-          <Upload size={14} />
-          Importar
+        <button type="button" className="btn-secondary" onClick={exportExcel}>
+          <DownloadSimple size={18} aria-hidden="true" /> Exportar
         </button>
-        <input
-          ref={importRef}
-          type="file"
-          accept=".xlsx"
-          style={{ display: 'none' }}
-          onChange={e => { importExcel(e.target.files[0]) }}
-        />
-      </Topbar>
+        <button type="button" className="btn-secondary" onClick={() => importRef.current?.click()}>
+          <UploadSimple size={18} aria-hidden="true" /> Importar
+        </button>
+        <button type="button" className="btn-ghost" onClick={() => setConfirmPurge(true)}>
+          <Broom size={18} aria-hidden="true" /> Limpiar duplicados
+        </button>
+        <input ref={importRef} type="file" accept=".xlsx,.xlsm" className="hidden" onChange={(e) => importExcel(e.target.files[0])} />
+      </PageHeader>
 
-      <div className="page-body">
-
-
-        <div className="card" style={{ padding: '1.25rem', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '1.5rem' }}>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.75rem] font-semibold text-gray-500 uppercase tracking-wide">Cámara / Zona</span>
-            <select className="select-field min-w-[200px]" value={camSel} onChange={e => setCamSel(e.target.value)}>
+      <Card className="mb-5 p-4 sm:p-5">
+        <form
+          className="grid grid-cols-1 items-end gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-[auto_minmax(132px,160px)_minmax(132px,160px)_minmax(150px,1fr)_auto]"
+          onSubmit={(e) => { e.preventDefault(); setRange('custom'); analyze() }}
+        >
+          <div className="min-w-0 sm:col-span-2 xl:col-span-1">
+            <span className="field-label">Periodo</span>
+            <Segmented options={RANGES.map(({ value, label }) => ({ value, label }))} value={range} onChange={pickRange} label="Periodo" />
+          </div>
+          <label className="min-w-0">
+            <span className="field-label">Desde</span>
+            <input type="date" className="input" value={dateFrom} max={dateTo} onChange={(e) => { setDateFrom(e.target.value); setRange('custom') }} />
+          </label>
+          <label className="min-w-0">
+            <span className="field-label">Hasta</span>
+            <input type="date" className="input" value={dateTo} min={dateFrom} onChange={(e) => { setDateTo(e.target.value); setRange('custom') }} />
+          </label>
+          <label className="min-w-0">
+            <span className="field-label">Cámara o zona</span>
+            <select className="input" value={camSel} onChange={(e) => { setCamSel(e.target.value); analyze(dateFrom, dateTo, e.target.value) }}>
               <option value="all">Todas las cámaras</option>
-              {cameras.map(c => (
-                <option key={c.id} value={`cam:${c.id}`}>{c.name} ({c.role})</option>
-              ))}
-              {[...new Set(cameras.filter(c => c.group).map(c => c.group))].map(g => (
-                <option key={g} value={`group:${g}`}>Grupo: {g}</option>
-              ))}
+              {cameras.map((c) => <option key={c.id} value={`cam:${c.camera_id}`}>{c.name}</option>)}
+              {zones.map((z) => <option key={z} value={`zone:${z}`}>Zona {z}</option>)}
             </select>
           </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.75rem] font-semibold text-gray-500 uppercase tracking-wide">Desde</span>
-            <input
-              type="date" className="select-field"
-              value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.75rem] font-semibold text-gray-500 uppercase tracking-wide">Hasta</span>
-            <input
-              type="date" className="select-field"
-              value={dateTo} onChange={e => setDateTo(e.target.value)}
-            />
-          </label>
-          <div style={{ marginLeft: 'auto', display: 'flex' }}>
-            <button type="button" className="btn btn-success" onClick={loadData} disabled={loading}>
-              <Search size={14} />
-              {loading ? 'Analizando…' : 'Aplicar filtros'}
-            </button>
-          </div>
-        </div>
-
-        {/*KPIs*/}
-        <div className="kpi-grid">
-          <KpiSm label="Entradas totales" value={rows.length ? totalIn.toLocaleString('es-PE') : '—'} colorClass="green" sub="Personas" />
-          <KpiSm label="Salidas totales" value={rows.length ? totalOut.toLocaleString('es-PE') : '—'} colorClass="red" sub="Personas" />
-          <KpiSm label="Flujo neto" value={rows.length ? (netFlow >= 0 ? '+' : '') + netFlow.toLocaleString('es-PE') : '—'} colorClass="teal" sub="Entradas - Salidas" />
-          <KpiSm label="Hora pico" value={rows.length && horaPico ? horaPico : '—'} colorClass="amber" sub={horaPico ? `${peakEntry?.[1]} cruces` : ''} />
-          <KpiSm label="Día más activo" value={rows.length && topDay ? topDay.name : '—'} colorClass="purple" sub={topDay ? `${topDay.date} / ${topDay.count} cruces` : ''} />
-        </div>
-
-        {/*Graficos fila 1: barras hora + línea diaria*/}
-        <div className="charts-row cols-1-1">
-
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">
-                Entradas vs Salidas por Hora
-              </span>
-            </div>
-            <div className="card-body chart-wrap">
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={hourBarData} margin={{ top: 5, right: 10, left: -15, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} vertical={false} />
-                  <XAxis dataKey="hora" tick={{ fontSize: 10, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={formatCompact} tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip content={<CT />} />
-                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="Entradas" fill={"var(--teal)"} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Salidas" fill={"var(--amber)"} fillOpacity={.7} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">
-                Tráfico Diario
-              </span>
-            </div>
-            <div className="card-body chart-wrap">
-              <ResponsiveContainer width="100%" height={260}>
-                <LineChart data={lineData} margin={{ top: 5, right: 15, left: -15, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} />
-                  <XAxis dataKey="dia" tick={{ fontSize: 10, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={formatCompact} tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip content={<CT />} />
-                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                  <Line type="monotone" dataKey="Entradas" stroke={"var(--teal)"} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                  <Line type="monotone" dataKey="Salidas" stroke={"var(--amber)"} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} strokeDasharray="5 3" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-        </div>
-
-        {/*Gráficos fila 2: torta + por día de semana*/}
-        <div className="charts-row cols-1-1">
-
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">
-                Proporción Entradas / Salidas
-              </span>
-            </div>
-            <div className="card-body chart-wrap" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie
-                    data={pieData} cx="50%" cy="50%"
-                    innerRadius={60} outerRadius={90}
-                    paddingAngle={4} dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    labelLine={{ stroke: '#9ca3af', strokeWidth: 1 }}
-                  >
-                    <Cell fill={"var(--teal)"} />
-                    <Cell fill={"var(--amber)"} />
-                  </Pie>
-                  <Tooltip content={<CT />} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">
-                Actividad por Día de la Semana
-              </span>
-            </div>
-            <div className="card-body chart-wrap">
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={dowData} margin={{ top: 5, right: 10, left: -15, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={"var(--grid)"} vertical={false} />
-                  <XAxis dataKey="dia" tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={formatCompact} tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip content={<CT />} />
-                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="Entradas" fill={"var(--teal)"} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Salidas" fill={"var(--amber)"} fillOpacity={.75} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-        </div>
-
-        {/*Mapa de calor*/}
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">
-              Mapa de Calor — Actividad por Día y Hora
+          {/* El texto no cambia al cargar (solo el ícono), así el botón conserva su ancho */}
+          <button type="submit" className="btn-primary h-10 w-full xl:w-[124px]" disabled={loading} aria-busy={loading}>
+            {loading ? <ArrowsClockwise size={18} className="animate-spin" aria-hidden="true" /> : <MagnifyingGlass size={18} aria-hidden="true" />}
+            Analizar
+          </button>
+        </form>
+        <p className="mt-3 min-h-[20px] text-[13px] leading-5" role={error ? 'alert' : undefined}>
+          {error ? (
+            <span className="inline-flex items-center gap-1.5 text-danger"><WarningCircle size={16} weight="bold" aria-hidden="true" />{error}</span>
+          ) : result ? (
+            <span className="text-fg-2">
+              Mostrando {result.from === result.to ? formatDayKey(result.from) : `${formatDayKey(result.from)} – ${formatDayKey(result.to)}`}
+              {prev && <> · comparado con {prev.from === prev.to ? formatDayKey(prev.from) : `${formatDayKey(prev.from)} – ${formatDayKey(prev.to)}`}</>}
+              {loading && ' · actualizando…'}
             </span>
-          </div>
-          <div className="card-body">
-            <Heatmap data={rows} />
-          </div>
+          ) : null}
+        </p>
+      </Card>
+
+      <div className={`space-y-4 transition-opacity duration-150 lg:space-y-5 ${loading ? 'opacity-60' : ''}`} aria-busy={loading}>
+        {result && rows.length === 0 && (
+          <p className="flex items-center gap-2 rounded-md border border-line bg-surface px-4 py-3 text-sm text-fg-2">
+            <Info size={18} className="shrink-0 text-fg-3" aria-hidden="true" />
+            No hay cruces en este periodo.{available?.last_date && ` El último dato es del ${formatDayKey(available.last_date)}.`}
+          </p>
+        )}
+
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 lg:gap-5">
+          <Kpi label="Entradas" value={formatNumber(stats.totalIn)}>{result && <Delta now={stats.totalIn} prev={prev?.in} />}</Kpi>
+          <Kpi label="Salidas" value={formatNumber(stats.totalOut)}>{result && <Delta now={stats.totalOut} prev={prev?.out} />}</Kpi>
+          <Kpi label="Balance" value={`${net > 0 ? '+' : ''}${formatNumber(net)}`}>
+            {net === 0 ? 'Entradas y salidas iguales' : net > 0 ? 'Entró más gente' : 'Salió más gente'}
+          </Kpi>
+          <Kpi label="Hora pico" value={stats.peakHour.h == null ? '—' : formatHour12(stats.peakHour.h)}>
+            {stats.peakHour.h != null && `${formatNumber(stats.peakHour.t)} cruces en esa hora`}
+          </Kpi>
+          <Kpi label="Día más activo" value={stats.topDay.k ? DAY_NAMES[parseDayKey(stats.topDay.k).getDay()] : '—'}>
+            {stats.topDay.k && `${formatDayKey(stats.topDay.k)} · ${formatNumber(stats.topDay.t)} cruces`}
+          </Kpi>
         </div>
 
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5">
+          <FlowChart rows={rows} stats={stats} days={days} />
+          <BandsCard bands={stats.bands} />
+          <MaxOccupancyCard stats={stats} days={days} />
+          <WeekdayCard byDow={stats.byDow} />
+        </div>
 
-
+        {shownCameras.length > 1 && <CamerasCompare byCamera={stats.byCamera} cameras={shownCameras} />}
+        <Heatmap dowHour={stats.dowHour} />
+        <EventsTable rows={rows} cameraNames={cameraNames} />
       </div>
+
+      {confirmPurge && (
+        <Modal
+          title="Limpiar duplicados importados"
+          onClose={() => setConfirmPurge(false)}
+          width="max-w-md"
+          footer={
+            <>
+              <button type="button" className="btn-secondary" onClick={() => setConfirmPurge(false)}>Cancelar</button>
+              <button type="button" className="btn-danger" onClick={purge}>Eliminar duplicados</button>
+            </>
+          }
+        >
+          <p className="text-sm text-fg-2">
+            Se borran los registros importados desde Excel que estén repetidos (misma cámara y mismo instante, al segundo).
+            Los conteos de las cámaras no se tocan. No se puede deshacer.
+          </p>
+        </Modal>
+      )}
     </>
   )
 }

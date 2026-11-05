@@ -1,8 +1,4 @@
-"""
-app/api/v1/realtime.py
------------------------
-WebSocket para datos en tiempo real.
-"""
+"""WebSocket de conteos en tiempo real."""
 from __future__ import annotations
 
 import logging
@@ -18,10 +14,7 @@ logger = logging.getLogger(__name__)
 @router.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket) -> None:
     """
-    Stream WebSocket en tiempo real.
-    El PollerPool hace broadcast aquí cada vez que detecta un cruce de línea.
-
-    Formato de mensaje:
+    El PollerPool hace broadcast aquí en cada cruce de línea. Formato:
     {
       "type": "count_update",
       "payload": {
@@ -39,6 +32,6 @@ async def websocket_live(websocket: WebSocket) -> None:
     await ws_manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()  # mantener la conexión activa
+            await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)

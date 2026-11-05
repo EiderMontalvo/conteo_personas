@@ -36,7 +36,7 @@ api/v1/          ->  services/        ->  repositories/
 
 **OnvifCameraClient** — Encapsula la conexion ONVIF PullPoint a una camara. Ejecuta el codigo zeep (sincrono) en un `ThreadPoolExecutor` para no bloquear el event loop de FastAPI. Soporta `reset(new_ip)` para reconectarse sin recrear el objeto.
 
-**CountingService** — Unica fuente de verdad para la logica de roles (`both` / `in_only` / `out_only`), la decision de persistir `change_event` o `hourly_heartbeat`, y el broadcast WebSocket.
+**CountingService** — Unica fuente de verdad para la logica de roles (`both` / `in_only` / `out_only` / `space`), la decision de persistir `change_event` o `hourly_heartbeat`, y el broadcast WebSocket.
 
 **EnvWriter** — Mantiene el archivo `.env` sincronizado con la base de datos. Cada escritura es atomica: escribe en `.env.tmp` y hace `os.replace()` para evitar corrupcion ante errores.
 
@@ -116,9 +116,15 @@ Copia `.env.example` a `.env` y edita los valores. El archivo `.env` nunca debe 
 |---|---|---|
 | `CAMERA_0_IP` | IP de la camara con indice 0 (semilla inicial) | — |
 | `CAMERA_0_NAME` | Nombre descriptivo de la camara 0 | `Camara 0` |
-| `CAMERA_0_ROLE` | Rol: `both` / `in_only` / `out_only` | `both` |
+| `CAMERA_0_ROLE` | Rol: `both` / `in_only` / `out_only` / `space` | `both` |
 | `CAMERA_0_GROUP` | Grupo logico para consolidar camaras | — |
-| `POLL_INTERVAL_SECONDS` | Intervalo de polling en segundos (minimo 2) | `3` |
+| `POLL_INTERVAL_SECONDS` | Espera maxima de cada PullMessages (long-poll), en segundos | `3` |
+| `ONVIF_PORT` | Puerto ONVIF de la camara | `80` |
+| `ONVIF_TIMEOUT` | Segundos para conectar/responder antes de dar la camara por caida | `8` |
+| `ONVIF_SUBSCRIPTION_TTL` | Vida de la suscripcion de eventos; se renueva a la mitad | `120` |
+| `ONVIF_UNSUBSCRIBE` | Enviar Unsubscribe al reconectar (algunas camaras cancelan tambien las del NVR) | `false` |
+| `RECONNECT_MAX_DELAY` | Espera maxima entre reintentos (2s, 4s, 8s...) | `60` |
+| `DEMO_MODE` | `true` = no conecta a camaras, genera cruces simulados | `false` |
 | `DATABASE_URL` | URL de SQLAlchemy | `sqlite:///./conteo_personas.db` |
 | `TIMEZONE` | Zona horaria IANA | `America/Lima` |
 | `BUSINESS_HOUR_START` | Inicio del horario de negocio (0-24) | `0` |
@@ -144,6 +150,27 @@ CAMERA_1_GROUP=puerta_norte
 
 Ambas camaras se consolidan en reportes y el export Excel como un solo punto identificado por `puerta_norte`.
 
+### Camara con rol `space` (unica camara = un espacio)
+
+El rol `space` modela una **camara que vigila un espacio cerrado** (sala, auditorio, local) y no una puerta con entrada/salida. La propia camara cuenta tanto entradas como salidas, y el sistema mantiene vivo el valor de `people_inside` (aforo actual) contra `max_capacity`.
+
+```dotenv
+CAMERA_0_IP=192.168.1.120
+CAMERA_0_NAME=Auditorio_Central
+CAMERA_0_ROLE=space
+CAMERA_0_GROUP=auditorio
+```
+
+Las camaras con rol `space` alimentan el panel **Control de Aforo** del frontend a traves del endpoint `/api/v1/stats/capacity`, que devuelve por cada camara:
+
+- `people_inside` (ocupacion actual)
+- `max_capacity` (aforo maximo)
+- `available` (plazas libres)
+- `pct` (porcentaje de ocupacion 0-100)
+- `status` semaforico (`Normal` / `Advertencia` / `Critico`) calculado contra `warning_threshold` y `critical_threshold` de `system_settings`
+
+El rol `space` no consolida con otras camaras: una camara `space` es por definicion la unica responsable de su espacio.
+
 ---
 
 ## Base de datos
@@ -152,11 +179,11 @@ Ambas camaras se consolidan en reportes y el export Excel como un solo punto ide
 
 | Tabla | Descripcion |
 |---|---|
-| `cameras` | Configuracion de cada camara (IP, nombre, rol, aforo, horario). Fuente de verdad para el PollerPool. |
+| `cameras` | Configuracion de cada camara (IP, nombre, rol, `max_capacity`, `zone`, `location`, horario). Fuente de verdad para el PollerPool. |
 | `camera_states` | Estado en tiempo real: personas dentro, totales, estado de aforo. Se actualiza con cada cruce. |
 | `counting_events` | Historico de eventos. Tipos: `change_event`, `hourly_heartbeat`, `imported`. |
 | `hourly_stats` | Agregados por hora (bucket) para consultas de reportes rapidas. |
-| `system_settings` | Configuracion editable desde el frontend: umbrales, zona horaria, intervalos. |
+| `system_settings` | Configuracion editable desde el frontend: umbrales de aforo (`warning_threshold`, `critical_threshold`), zona horaria, intervalos. |
 
 ### Motores soportados
 
@@ -186,6 +213,7 @@ Documentacion interactiva disponible en `/docs` (Swagger UI) y `/redoc`.
 |---|---|---|
 | `GET` | `/api/v1/cameras` | Lista camaras activas con estado en tiempo real |
 | `POST` | `/api/v1/cameras` | Crear camara nueva (actualiza BD y .env, arranca poller) |
+| `GET` | `/api/v1/cameras/status` | Estado de conexion de cada camara (connecting / connected / reconnecting / stopped, ultimo error, proximo reintento) |
 | `GET` | `/api/v1/cameras/discover` | Escanear la red local para encontrar camaras ONVIF |
 | `GET` | `/api/v1/cameras/{id}` | Detalle de una camara |
 | `PUT` | `/api/v1/cameras/{id}` | Actualizar camara (si cambia IP, el poller se reconecta automaticamente) |
@@ -197,6 +225,38 @@ Documentacion interactiva disponible en `/docs` (Swagger UI) y `/redoc`.
 |---|---|---|
 | `GET` | `/api/v1/stats/historical` | Historico filtrable por camara, grupo y fechas |
 | `GET` | `/api/v1/stats/summary` | Totales del dia en curso por camara |
+| `GET` | `/api/v1/stats/capacity` | Estado de aforo en tiempo real de las camaras con `role=space` |
+
+#### Respuesta de `/capacity`
+
+Por cada camara con `role=space` devuelve:
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 1,
+      "camera_id": 0,
+      "name": "Auditorio_Central",
+      "zone": "auditorio",
+      "max_capacity": 200,
+      "people_inside": 145,
+      "available": 55,
+      "pct": 73,
+      "status": "Normal",
+      "total_in": 410,
+      "total_out": 265,
+      "warning_threshold": 80,
+      "critical_threshold": 100
+    }
+  ],
+  "total": 1,
+  "error": null
+}
+```
+
+`status` se calcula asi: `Crítico` si `pct >= critical_threshold`, `Advertencia` si `pct >= warning_threshold`, `Normal` en el resto. Los umbrales vienen de `system_settings`.
 
 Parametros de `/historical`:
 
@@ -258,7 +318,23 @@ El servidor envia un mensaje cada vez que se detecta un cruce de linea. El clien
     "in_count": 1,
     "out_count": 0,
     "accum_in": 12,
-    "accum_out": 8
+    "accum_out": 8,
+    "people_inside": 4
+  }
+}
+```
+
+Cuando cambia el estado de conexion de una camara tambien se envia:
+
+```json
+{
+  "type": "camera_status",
+  "payload": {
+    "camera_id": 0,
+    "state": "reconnecting",
+    "last_error": "La camara no responde (timeout)",
+    "next_retry_at": "2026-11-06T15:00:04+00:00",
+    "consecutive_failures": 2
   }
 }
 ```
@@ -267,8 +343,9 @@ El servidor envia un mensaje cada vez que se detecta un cruce de linea. El clien
 |---|---|
 | `in_count` | Cruces de entrada en este ciclo de polling |
 | `out_count` | Cruces de salida en este ciclo de polling |
-| `accum_in` | Total acumulado de entradas desde el arranque del servidor |
-| `accum_out` | Total acumulado de salidas desde el arranque del servidor |
+| `accum_in` | Entradas del dia (zona horaria del negocio); sobrevive a reinicios |
+| `accum_out` | Salidas del dia; sobrevive a reinicios |
+| `people_inside` | Personas dentro segun esta camara (nunca negativo) |
 
 ---
 
@@ -319,6 +396,21 @@ El sistema usa una estrategia event-driven para minimizar el espacio en disco:
 - `change_event`: se guarda unicamente cuando alguien cruza la linea (hay actividad real).
 - `hourly_heartbeat`: si no hay actividad durante 1 hora dentro del horario de negocio configurado, se guarda un registro con `in=0`, `out=0`. Esto preserva la continuidad temporal en los reportes sin desperdiciar espacio.
 - `imported`: registros cargados desde un archivo Excel externo.
+
+El estado del dia de cada camara (totales y personas dentro) se guarda en `camera_states` con cada cruce y se reinicia a medianoche en la zona horaria configurada.
+
+### Conexion con la camara
+
+- Una sola suscripcion PullPoint por camara, renovada con `Renew` a mitad del TTL. Si la camara no acepta `Renew`, se resuscribe antes de que venza.
+- Si la camara no responde, el poller reintenta con espera creciente (2s, 4s, 8s... hasta `RECONNECT_MAX_DELAY`) sin bloquear el servidor.
+- Los cruces ocurridos mientras la camara esta desconectada no se recuperan: ONVIF entrega eventos, no contadores.
+
+### Pruebas
+
+```bash
+../venv/bin/pip install -r requirements-dev.txt
+../venv/bin/python -m pytest
+```
 
 ---
 

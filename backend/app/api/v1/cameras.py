@@ -1,9 +1,4 @@
-"""
-app/api/v1/cameras.py
-----------------------
-Router de cámaras. SOLO orquesta — sin lógica de negocio.
-Toda la lógica vive en CameraService / discovery.py.
-"""
+"""Endpoints de cámaras; la lógica vive en CameraService y discovery.py."""
 from __future__ import annotations
 
 import logging
@@ -23,11 +18,50 @@ router = APIRouter(prefix="/cameras", tags=["Cámaras"])
 logger = logging.getLogger(__name__)
 
 
-def _db():
-    yield from database.get_db()
+def _video_camera(db: Session, camera_pk: int):
+    from app.core.config import settings
+
+    cam = camera_repo.get(db, camera_pk)
+    if cam is None or not cam.is_active:
+        raise HTTPException(status_code=404, detail="Cámara no encontrada.")
+    if settings.demo_mode:
+        raise HTTPException(status_code=503, detail="Sin video en modo demo: no hay cámara conectada.")
+    return cam
 
 
-# ── GET /cameras ──────────────────────────────────────────────────
+@router.get(
+    "/{camera_pk}/snapshot",
+    summary="Imagen actual de la cámara (JPEG)",
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
+async def camera_snapshot(camera_pk: int, db: Session = Depends(database.get_db)):
+    from fastapi.responses import Response
+    from app.integrations.video import VideoUnavailable, fetch_snapshot
+
+    cam = _video_camera(db, camera_pk)
+    try:
+        jpeg = await fetch_snapshot(cam.ip_address)
+    except VideoUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.get(
+    "/{camera_pk}/stream",
+    summary="Video en vivo (MJPEG)",
+    description="Para usar directo en un <img>. Retransmite el MJPEG de la cámara o, si no lo ofrece, snapshots a ~2 fps.",
+)
+async def camera_stream(camera_pk: int, db: Session = Depends(database.get_db)):
+    from fastapi.responses import StreamingResponse
+    from app.integrations.video import VideoUnavailable, open_mjpeg
+
+    cam = _video_camera(db, camera_pk)
+    try:
+        media_type, body = await open_mjpeg(cam.ip_address)
+    except VideoUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return StreamingResponse(body, media_type=media_type, headers={"Cache-Control": "no-store"})
+
 
 @router.get(
     "",
@@ -35,23 +69,46 @@ def _db():
     summary="Lista las cámaras configuradas",
     description="Devuelve todas las cámaras activas con su configuración y estado en tiempo real.",
 )
-async def list_cameras(db: Session = Depends(_db)):
+async def list_cameras(db: Session = Depends(database.get_db)):
     cameras = await camera_service.get_all(db)
-    # Enriquecer con estado en tiempo real
-    result: List[CameraOut] = []
-    for cam in cameras:
-        state = camera_repo.get_state(db, cam.camera_id)
-        cam_out = CameraOut.model_validate(cam)
-        if state:
-            cam_out.people_inside = state.people_inside
-            cam_out.total_in = state.total_in
-            cam_out.total_out = state.total_out
-            cam_out.status = state.status
-        result.append(cam_out)
+    result = [_to_out(db, cam) for cam in cameras]
     return ApiResponse.success(result, total=len(result))
 
 
-# ── GET /cameras/discover ─────────────────────────────────────────
+def _to_out(db: Session, cam) -> CameraOut:
+    """CameraOut enriquecido con el estado del día y el de la conexión."""
+    from app.integrations.onvif.event_listener import poller_pool
+
+    cam_out = CameraOut.model_validate(cam)
+    state = camera_repo.get_state(db, cam.camera_id)
+    if state:
+        cam_out.people_inside = state.people_inside
+        cam_out.total_in = state.total_in
+        cam_out.total_out = state.total_out
+        cam_out.status = state.status
+    poller = poller_pool.get(cam.camera_id)
+    if poller:
+        cam_out.connection = poller.snapshot()
+    return cam_out
+
+
+# Declarado antes de /{camera_pk} para que "status" no se tome como id.
+@router.get(
+    "/status",
+    response_model=ApiResponse[List[dict]],
+    summary="Estado de conexión de cada cámara",
+    description=(
+        "connecting | connected | reconnecting | stopped, con último error, "
+        "próximo reintento y fallos consecutivos. Los cambios también se "
+        "emiten por /ws/live como mensajes type='camera_status'."
+    ),
+)
+async def cameras_status():
+    from app.integrations.onvif.event_listener import poller_pool
+
+    data = poller_pool.status()
+    return ApiResponse.success(data, total=len(data))
+
 
 @router.get(
     "/discover",
@@ -62,16 +119,13 @@ async def list_cameras(db: Session = Depends(_db)):
         "para encontrar cámaras en la red local. Puede tardar 5-15 segundos."
     ),
 )
-async def discover(db: Session = Depends(_db)):
+async def discover(db: Session = Depends(database.get_db)):
     discovered = await discover_cameras()
-    # Marcar cuáles ya están en BD
-    existing_ips = {c.ip_address for c in camera_repo.get_all(db, limit=1000)}
+    existing_ips = {c.ip_address for c in camera_repo.get_active(db)}
     for cam in discovered:
         cam.already_added = cam.ip in existing_ips
     return ApiResponse.success(discovered, total=len(discovered))
 
-
-# ── POST /cameras ─────────────────────────────────────────────────
 
 @router.post(
     "",
@@ -80,40 +134,35 @@ async def discover(db: Session = Depends(_db)):
     summary="Agregar una cámara nueva",
     description="Crea la cámara en BD, la registra en el .env y arranca su poller automáticamente.",
 )
-async def create_camera(data: CameraCreate, db: Session = Depends(_db)):
-    # Verificar que la IP no esté duplicada
+async def create_camera(data: CameraCreate, db: Session = Depends(database.get_db)):
+    # IP repetida: error si está activa, se reactiva si no.
     existing = camera_repo.get_by_ip(db, data.ip_address)
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Ya existe una cámara con la IP {data.ip_address}.",
-        )
+        if existing.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Ya existe una cámara activa con la IP {data.ip_address}.",
+            )
+        else:
+            update_data = CameraUpdate(**data.model_dump(), is_active=True)
+            cam = await camera_service.update(db, existing.id, update_data)
+            return ApiResponse.success(CameraOut.model_validate(cam))
+
     cam = await camera_service.create(db, data)
     return ApiResponse.success(CameraOut.model_validate(cam))
 
-
-# ── GET /cameras/{id} ─────────────────────────────────────────────
 
 @router.get(
     "/{camera_pk}",
     response_model=ApiResponse[CameraOut],
     summary="Detalle de una cámara",
 )
-async def get_camera(camera_pk: int, db: Session = Depends(_db)):
+async def get_camera(camera_pk: int, db: Session = Depends(database.get_db)):
     cam = await camera_service.get_by_id(db, camera_pk)
     if cam is None:
         raise HTTPException(status_code=404, detail="Cámara no encontrada.")
-    state = camera_repo.get_state(db, cam.camera_id)
-    cam_out = CameraOut.model_validate(cam)
-    if state:
-        cam_out.people_inside = state.people_inside
-        cam_out.total_in = state.total_in
-        cam_out.total_out = state.total_out
-        cam_out.status = state.status
-    return ApiResponse.success(cam_out)
+    return ApiResponse.success(_to_out(db, cam))
 
-
-# ── PUT /cameras/{id} ─────────────────────────────────────────────
 
 @router.put(
     "/{camera_pk}",
@@ -125,14 +174,12 @@ async def get_camera(camera_pk: int, db: Session = Depends(_db)):
         "El archivo .env también se actualiza."
     ),
 )
-async def update_camera(camera_pk: int, data: CameraUpdate, db: Session = Depends(_db)):
+async def update_camera(camera_pk: int, data: CameraUpdate, db: Session = Depends(database.get_db)):
     cam = await camera_service.update(db, camera_pk, data)
     if cam is None:
         raise HTTPException(status_code=404, detail="Cámara no encontrada.")
     return ApiResponse.success(CameraOut.model_validate(cam))
 
-
-# ── DELETE /cameras/{id} ──────────────────────────────────────────
 
 @router.delete(
     "/{camera_pk}",
@@ -140,7 +187,7 @@ async def update_camera(camera_pk: int, data: CameraUpdate, db: Session = Depend
     summary="Desactivar una cámara",
     description="Marca la cámara como inactiva, cancela su poller y comenta su entrada en el .env.",
 )
-async def deactivate_camera(camera_pk: int, db: Session = Depends(_db)):
+async def deactivate_camera(camera_pk: int, db: Session = Depends(database.get_db)):
     ok = await camera_service.deactivate(db, camera_pk)
     if not ok:
         raise HTTPException(status_code=404, detail="Cámara no encontrada.")

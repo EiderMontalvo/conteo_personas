@@ -1,19 +1,15 @@
-// src/hooks/useWebSocket.js
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-// Conectar directamente al backend FastAPI (el proxy WS de Vite a veces no es fiable en dev)
-const WS_URL = 'ws://localhost:8000/ws/live'
+// Directo al backend en el mismo host que sirve la página, para que funcione
+// también desde otro equipo de la red (el proxy WS de Vite no es fiable en dev).
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/live`
 const RETRY_MS = 3000
 
-/**
- * Hook que mantiene una conexión WebSocket persistente con reconexión
- * automática. Devuelve el último mensaje recibido y el estado de conexión.
- */
+/** Conexión WebSocket persistente con reconexión automática. */
 export function useWebSocket(onMessage) {
   const [connected, setConnected] = useState(false)
-  const onMsgRef  = useRef(onMessage)
+  const onMsgRef = useRef(onMessage)
 
-  // Mantener la ref al callback actualizada sin reconectar
   useEffect(() => { onMsgRef.current = onMessage }, [onMessage])
 
   useEffect(() => {
@@ -22,31 +18,23 @@ export function useWebSocket(onMessage) {
 
     const connect = () => {
       ws = new WebSocket(WS_URL)
-
-      ws.onopen = () => {
-        setConnected(true)
-        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
-      }
-
+      ws.onopen = () => setConnected(true)
       ws.onmessage = (e) => {
         try {
-          const data = JSON.parse(e.data)
-          onMsgRef.current?.(data)
-        } catch { /* ignorar mensajes mal formados */ }
+          onMsgRef.current?.(JSON.parse(e.data))
+        } catch { /* mensaje mal formado */ }
       }
-
       ws.onclose = () => {
         setConnected(false)
         retryTimer = setTimeout(connect, RETRY_MS)
       }
-
       ws.onerror = () => ws.close()
     }
 
     connect()
 
     return () => {
-      if (retryTimer) clearTimeout(retryTimer)
+      clearTimeout(retryTimer)
       if (ws) {
         ws.onclose = null
         ws.close()

@@ -1,8 +1,4 @@
-"""
-app/schemas/settings.py
------------------------
-Schemas para la configuración del sistema.
-"""
+"""Schemas de la configuración del sistema."""
 from __future__ import annotations
 
 from typing import Optional
@@ -11,7 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class SystemSettingsOut(BaseModel):
-    """Configuración completa del sistema."""
     id: int
     update_interval: int
     heartbeat_interval: int
@@ -25,7 +20,6 @@ class SystemSettingsOut(BaseModel):
 
 
 class SystemSettingsUpdate(BaseModel):
-    """Actualización parcial de la configuración del sistema."""
     update_interval: Optional[int] = Field(None, ge=1, description="Segundos entre actualizaciones")
     heartbeat_interval: Optional[int] = Field(None, ge=60, description="Segundos entre heartbeats")
     timezone: Optional[str] = None

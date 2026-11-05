@@ -1,456 +1,386 @@
-import { useState, useEffect } from 'react'
-import { Save, Settings as SettingsIcon, Camera, Server, Search, Plus, X, Wifi, AlertCircle, CheckCircle, Loader } from 'lucide-react'
-import Topbar from '../components/Topbar'
+import { useEffect, useState } from 'react'
+import {
+  ArrowsClockwise, CheckCircle, FloppyDisk, Info, MagnifyingGlass, PencilSimple, Plus, Power, VideoCamera, WarningCircle,
+} from '@phosphor-icons/react'
+import { api } from '../hooks/useApi'
+import { useLive } from '../context/LiveContext'
 import { useToast } from '../context/ToastContext'
+import { formatNumber, roleLabel } from '../utils/format'
+import { Card, CardHeader, EmptyState, Modal, PageHeader, StatusText } from '../components/ui'
+import { connectionMeta } from '../components/connection'
 
-const API = 'http://localhost:8000/api/v1'
+const ROLE_OPTIONS = [
+  { value: 'both', label: 'Entrada y salida', hint: 'Una línea que cuenta en ambos sentidos.' },
+  { value: 'in_only', label: 'Solo entrada', hint: 'Ignora las salidas; útil con otra cámara para la salida.' },
+  { value: 'out_only', label: 'Solo salida', hint: 'Ignora las entradas.' },
+  { value: 'space', label: 'Espacio de aforo', hint: 'Aparece en la pantalla Aforo con su límite de personas.' },
+]
+const IP_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 
-// ─── Hook para datos ────────────────────────────────────────────────────────
-
-function useCameras() {
-  const [cameras, setCameras] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  const reload = () => {
-    setLoading(true)
-    fetch(`${API}/cameras`)
-      .then(r => r.json())
-      .then(res => setCameras(res.data || []))
-      .catch(console.error)
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(reload, [])
-  return { cameras, setCameras, loading, reload }
+function Field({ label, error, hint, children, className = '' }) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="field-label">{label}</span>
+      {children}
+      {error
+        ? <span className="mt-1 flex items-center gap-1 text-[13px] text-danger"><WarningCircle size={14} weight="bold" aria-hidden="true" />{error}</span>
+        : hint && <span className="mt-1 block text-[13px] text-fg-2">{hint}</span>}
+    </label>
+  )
 }
-
-// ─── Modal: Agregar/Editar Cámara ───────────────────────────────────────────
 
 function CameraModal({ initial, onClose, onSaved }) {
   const { addToast } = useToast()
   const isNew = !initial?.id
   const [form, setForm] = useState({
-    name: initial?.name || '',
-    ip_address: initial?.ip_address || initial?.ip || '',
-    role: initial?.role || 'both',
-    zone: initial?.zone || '',
-    max_capacity: initial?.max_capacity || 150,
-    location: initial?.location || '',
-    operating_hours_start: initial?.operating_hours_start || '00:00',
-    operating_hours_end: initial?.operating_hours_end || '23:59',
+    name: initial?.name ?? '',
+    ip_address: initial?.ip_address ?? initial?.ip ?? '',
+    role: initial?.role ?? 'both',
+    zone: initial?.zone ?? '',
+    max_capacity: initial?.max_capacity ?? 150,
+    location: initial?.location ?? '',
+    operating_hours_start: initial?.operating_hours_start ?? '00:00',
+    operating_hours_end: initial?.operating_hours_end ?? '23:59',
   })
+  const [errors, setErrors] = useState({})
   const [saving, setSaving] = useState(false)
+  const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }))
 
-  const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const validate = () => {
+    const e = {}
+    if (!form.name.trim()) e.name = 'Escribe un nombre para reconocerla.'
+    if (!IP_RE.test(form.ip_address.trim())) e.ip_address = 'IP no válida. Ejemplo: 192.168.1.100'
+    if (!(Number(form.max_capacity) >= 1)) e.max_capacity = 'Debe ser al menos 1.'
+    if (!TIME_RE.test(form.operating_hours_start)) e.operating_hours_start = 'Formato HH:MM'
+    if (!TIME_RE.test(form.operating_hours_end)) e.operating_hours_end = 'Formato HH:MM'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
 
-  const handleSave = async () => {
-    if (!form.name.trim()) return addToast('El nombre es obligatorio', 'error')
-    if (!form.ip_address.trim()) return addToast('La IP es obligatoria', 'error')
+  const save = async (ev) => {
+    ev.preventDefault()
+    if (saving || !validate()) return
+    setSaving(true)
+    const payload = {
+      ...form,
+      name: form.name.trim(),
+      ip_address: form.ip_address.trim(),
+      zone: form.zone.trim() || null,
+      location: form.location.trim() || null,
+      max_capacity: Number(form.max_capacity),
+    }
+    try {
+      const json = isNew ? await api.createCamera(payload) : await api.updateCamera(initial.id, payload)
+      if (!json.ok) throw new Error(json.error || 'respuesta inesperada')
+      addToast(isNew ? `“${payload.name}” agregada. Conectando…` : `“${payload.name}” actualizada`, 'success')
+      onSaved()
+      onClose()
+    } catch (e) {
+      const msg = e.message.includes('409') ? 'Ya hay una cámara activa con esa IP.' : e.message
+      addToast(`No se pudo guardar: ${msg}`, 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const role = ROLE_OPTIONS.find((r) => r.value === form.role)
+
+  return (
+    <Modal
+      title={isNew ? 'Agregar cámara' : `Editar ${initial.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button type="submit" form="camera-form" className="btn-primary" disabled={saving}>
+            {saving ? <ArrowsClockwise size={18} className="animate-spin" aria-hidden="true" /> : <FloppyDisk size={18} aria-hidden="true" />}
+            {isNew ? 'Guardar y conectar' : 'Guardar cambios'}
+          </button>
+        </>
+      }
+    >
+      <form id="camera-form" onSubmit={save} noValidate className="grid gap-4 sm:grid-cols-2">
+        {isNew && (
+          <p className="flex gap-2 rounded-md bg-surface-2 p-3 text-[13px] text-fg-2 sm:col-span-2">
+            <Info size={18} className="shrink-0 text-fg-3" aria-hidden="true" />
+            La cámara necesita ONVIF activo y una regla de línea virtual configurada en su interfaz web.
+          </p>
+        )}
+        <Field label="Nombre *" error={errors.name} className="sm:col-span-2">
+          <input className="input" value={form.name} onChange={set('name')} placeholder="Ej. Puerta principal" aria-invalid={!!errors.name} />
+        </Field>
+        <Field label="Dirección IP *" error={errors.ip_address}>
+          <input className="input num" value={form.ip_address} onChange={set('ip_address')} placeholder="192.168.1.100" inputMode="decimal" aria-invalid={!!errors.ip_address} />
+        </Field>
+        <Field label="Límite de personas" error={errors.max_capacity}>
+          <input type="number" min="1" className="input num" value={form.max_capacity} onChange={set('max_capacity')} aria-invalid={!!errors.max_capacity} />
+        </Field>
+        <Field label="Tipo" hint={role?.hint} className="sm:col-span-2">
+          <select className="input" value={form.role} onChange={set('role')}>
+            {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Zona" hint="Las cámaras con la misma zona suman su aforo.">
+          <input className="input" value={form.zone} onChange={set('zone')} placeholder="Opcional" />
+        </Field>
+        <Field label="Ubicación">
+          <input className="input" value={form.location} onChange={set('location')} placeholder="Opcional" />
+        </Field>
+        <Field label="Inicio de horario" error={errors.operating_hours_start}>
+          <input type="time" className="input" value={form.operating_hours_start} onChange={set('operating_hours_start')} />
+        </Field>
+        <Field label="Fin de horario" error={errors.operating_hours_end}>
+          <input type="time" className="input" value={form.operating_hours_end} onChange={set('operating_hours_end')} />
+        </Field>
+      </form>
+    </Modal>
+  )
+}
+
+function DiscoveryPanel({ onPick, onClose }) {
+  const [state, setState] = useState({ scanning: true, results: null, error: null })
+
+  useEffect(() => {
+    let alive = true
+    api.discoverCameras()
+      .then((r) => alive && setState({ scanning: false, results: r?.data ?? [], error: null }))
+      .catch((e) => alive && setState({ scanning: false, results: null, error: e.message }))
+    return () => { alive = false }
+  }, [])
+
+  return (
+    <Card className="mb-5">
+      <CardHeader
+        title="Cámaras encontradas en la red"
+        subtitle={state.scanning ? 'Buscando por ONVIF y puertos abiertos. Puede tardar hasta 15 segundos.' : 'Elige una para agregarla.'}
+        action={<button type="button" className="btn-ghost h-8 text-[13px]" onClick={onClose}>Cerrar</button>}
+      />
+      <div className="px-5 pb-5 pt-4">
+        {state.scanning && (
+          <p className="flex items-center gap-2 text-sm text-fg-2">
+            <ArrowsClockwise size={18} className="animate-spin" aria-hidden="true" /> Escaneando…
+          </p>
+        )}
+        {state.error && <p role="alert" className="text-sm text-danger">No se pudo escanear: {state.error}</p>}
+        {state.results?.length === 0 && (
+          <p className="text-sm text-fg-2">
+            No apareció ninguna cámara. Revisa que estén encendidas, en la misma red que este equipo y con ONVIF activo.
+          </p>
+        )}
+        {state.results?.length > 0 && (
+          <ul className="divide-y divide-line rounded-md border border-line">
+            {state.results.map((d) => (
+              <li key={d.ip} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div>
+                  <p className="num font-semibold">{d.ip}</p>
+                  <p className="text-[13px] text-fg-2">{d.manufacturer} · {d.model} · puerto {d.port}</p>
+                </div>
+                {d.already_added
+                  ? <StatusText icon={CheckCircle} tone="text-ok">Ya agregada</StatusText>
+                  : <button type="button" className="btn-secondary h-8 text-[13px]" onClick={() => onPick(d)}><Plus size={16} aria-hidden="true" /> Agregar</button>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function CamerasCard({ cameras, status, loaded, onEdit, onDeactivate }) {
+  return (
+    <Card>
+      <CardHeader title="Cámaras" subtitle={loaded ? `${cameras.length} activa${cameras.length === 1 ? '' : 's'}` : 'Cargando…'} />
+      {loaded && cameras.length === 0 ? (
+        <EmptyState icon={VideoCamera} title="No hay cámaras">
+          Usa “Buscar en la red” para encontrarlas o agrégalas a mano con su IP.
+        </EmptyState>
+      ) : (
+        <div className="relative mt-4 overflow-x-auto">
+          <table className="w-full min-w-[680px] text-sm">
+            <thead>
+              <tr className="border-y border-line bg-surface-2 text-left text-[13px] text-fg-2">
+                <th scope="col" className="px-5 py-2.5 font-semibold">Cámara</th>
+                <th scope="col" className="px-3 py-2.5 font-semibold">IP</th>
+                <th scope="col" className="px-3 py-2.5 font-semibold">Tipo</th>
+                <th scope="col" className="px-3 py-2.5 text-right font-semibold">Límite</th>
+                <th scope="col" className="px-3 py-2.5 font-semibold">Conexión</th>
+                <th scope="col" className="px-5 py-2.5"><span className="sr-only">Acciones</span></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {cameras.map((c) => {
+                const conn = status[c.camera_id]
+                const meta = connectionMeta(conn)
+                return (
+                  <tr key={c.id} className="align-top hover:bg-surface-2">
+                    <td className="px-5 py-3">
+                      <p className="font-semibold">{c.name}</p>
+                      <p className="text-[13px] text-fg-2">{[c.zone && `Zona ${c.zone}`, c.location].filter(Boolean).join(' · ') || 'Sin zona'}</p>
+                    </td>
+                    <td className="num px-3 py-3">{c.ip_address}</td>
+                    <td className="px-3 py-3">{roleLabel(c.role)}</td>
+                    <td className="num px-3 py-3 text-right">{formatNumber(c.max_capacity)}</td>
+                    <td className="max-w-[260px] px-3 py-3">
+                      <StatusText icon={meta.icon} tone={meta.tone}>{meta.label}</StatusText>
+                      {conn?.state === 'reconnecting' && conn.last_error && (
+                        <p className="mt-0.5 text-[13px] text-fg-2">{conn.last_error}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex justify-end gap-0.5">
+                        <button type="button" className="icon-btn" onClick={() => onEdit(c)} aria-label={`Editar ${c.name}`} title="Editar">
+                          <PencilSimple size={18} aria-hidden="true" />
+                        </button>
+                        <button type="button" className="icon-btn hover:text-danger" onClick={() => onDeactivate(c)} aria-label={`Desactivar ${c.name}`} title="Desactivar">
+                          <Power size={18} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function ThresholdsCard() {
+  const { addToast } = useToast()
+  const [form, setForm] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    api.getSettings()
+      .then((r) => setForm({ warning_threshold: r.data.warning_threshold, critical_threshold: r.data.critical_threshold }))
+      .catch(() => setError('No se pudieron leer los umbrales.'))
+  }, [])
+
+  const save = async (e) => {
+    e.preventDefault()
+    const w = Number(form.warning_threshold)
+    const c = Number(form.critical_threshold)
+    if (!(w >= 1 && w <= 100)) return setError('La advertencia debe estar entre 1 y 100 %.')
+    if (!(c >= 1 && c <= 200)) return setError('El crítico debe estar entre 1 y 200 %.')
+    if (w >= c) return setError('La advertencia tiene que ser menor que el crítico.')
+    setError(null)
     setSaving(true)
     try {
-      const url = isNew ? `${API}/cameras` : `${API}/cameras/${initial.id}`
-      const method = isNew ? 'POST' : 'PUT'
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        addToast(isNew ? `✅ Cámara "${form.name}" agregada` : `✅ Cámara "${form.name}" actualizada`, 'success')
-        onSaved()
-        onClose()
-      } else {
-        addToast(data.detail || data.error || 'Error al guardar', 'error')
-      }
-    } catch {
-      addToast('Error de conexión', 'error')
+      await api.updateSettings({ warning_threshold: w, critical_threshold: c })
+      addToast('Umbrales guardados', 'success')
+    } catch (err) {
+      addToast(`No se pudo guardar: ${err.message}`, 'error')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
-  const roleLabels = { both: 'Entrada y Salida', in_only: 'Solo Entrada', out_only: 'Solo Salida' }
-
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-box">
-        <div className="modal-header">
-          <span className="modal-title">
-            <Camera size={18} className="text-amber" />
-            {isNew ? 'Agregar Cámara' : `Editar: ${initial.name}`}
-          </span>
-          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
-        </div>
-        <div className="modal-body">
-          {isNew && (
-            <div className="info-banner">
-              <AlertCircle size={14} />
-              <span>La cámara debe tener <strong>ONVIF habilitado</strong> en su interfaz web antes de continuar.</span>
-            </div>
-          )}
-
-          <div className="form-grid">
-            <label className="form-field span-2">
-              <span className="form-label">Nombre descriptivo *</span>
-              <input className="form-input" value={form.name} onChange={e => f('name', e.target.value)} placeholder="Ej. Puerta Principal" />
-            </label>
-
-            <label className="form-field">
-              <span className="form-label">Dirección IP *</span>
-              <input className="form-input font-mono" value={form.ip_address} onChange={e => f('ip_address', e.target.value)} placeholder="192.168.1.100" />
-            </label>
-
-            <label className="form-field">
-              <span className="form-label">Aforo máximo (personas)</span>
-              <input type="number" min="1" className="form-input" value={form.max_capacity} onChange={e => f('max_capacity', parseInt(e.target.value) || 150)} />
-            </label>
-
-            <label className="form-field">
-              <span className="form-label">Dirección de conteo</span>
-              <select className="form-input" value={form.role} onChange={e => f('role', e.target.value)}>
-                {Object.entries(roleLabels).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </label>
-
-            <label className="form-field">
-              <span className="form-label">Grupo / Zona</span>
-              <input className="form-input" value={form.zone} onChange={e => f('zone', e.target.value)} placeholder="Ej. planta_baja (opcional)" />
-            </label>
-
-            <label className="form-field">
-              <span className="form-label">Inicio horario operativo</span>
-              <input type="time" className="form-input" value={form.operating_hours_start} onChange={e => f('operating_hours_start', e.target.value)} />
-            </label>
-
-            <label className="form-field">
-              <span className="form-label">Fin horario operativo</span>
-              <input type="time" className="form-input" value={form.operating_hours_end} onChange={e => f('operating_hours_end', e.target.value)} />
-            </label>
-
-            <label className="form-field span-2">
-              <span className="form-label">Descripción de ubicación</span>
-              <input className="form-input" value={form.location} onChange={e => f('location', e.target.value)} placeholder="Ej. Pasillo Norte, Piso 2 (opcional)" />
-            </label>
+    <Card>
+      <CardHeader title="Umbrales de aforo" subtitle="Porcentaje del límite de cada espacio" />
+      {form && (
+        <form onSubmit={save} className="space-y-4 px-5 pb-5 pt-4" noValidate>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Advertencia (%)">
+              <input type="number" min="1" max="100" className="input num" value={form.warning_threshold}
+                onChange={(e) => setForm((f) => ({ ...f, warning_threshold: e.target.value }))} />
+            </Field>
+            <Field label="Crítico (%)">
+              <input type="number" min="1" max="200" className="input num" value={form.critical_threshold}
+                onChange={(e) => setForm((f) => ({ ...f, critical_threshold: e.target.value }))} />
+            </Field>
           </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-outline" onClick={onClose} disabled={saving}>Cancelar</button>
-          <button className="btn btn-success" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader size={14} className="spin" /> : <Save size={14} />}
-            {isNew ? 'Guardar y Conectar' : 'Guardar cambios'}
+          {error && <p role="alert" className="text-[13px] text-danger">{error}</p>}
+          <button type="submit" className="btn-primary" disabled={saving}>
+            <FloppyDisk size={18} aria-hidden="true" /> {saving ? 'Guardando…' : 'Guardar umbrales'}
           </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Panel: Escaneo de Red ──────────────────────────────────────────────────
-
-function NetworkScanner({ onAdd }) {
-  const [scanning, setScanning] = useState(false)
-  const [results, setResults] = useState(null)
-  const [selectedCam, setSelectedCam] = useState(null)
-
-  const scan = async () => {
-    setScanning(true)
-    setResults(null)
-    try {
-      const res = await fetch(`${API}/cameras/discover`)
-      const data = await res.json()
-      setResults(data.data || [])
-    } catch {
-      setResults([])
-    }
-    setScanning(false)
-  }
-
-  return (
-    <div className="card">
-      <div className="card-header">
-        <span className="card-title"><Wifi size={16} className="text-teal" /> Descubrir Cámaras en la Red</span>
-      </div>
-      <div className="card-body">
-        <p className="help-text">
-          Escanea automáticamente la red local para encontrar cámaras ONVIF
-          conectadas al switch PoE o NVR.
-        </p>
-        <button className="btn btn-primary" onClick={scan} disabled={scanning}>
-          {scanning
-            ? <><Loader size={14} className="spin" /> Escaneando red...</>
-            : <><Search size={14} /> Escanear Red</>}
-        </button>
-
-        {scanning && (
-          <div className="scan-progress">
-            <div className="scan-pulse" />
-            <span>Buscando cámaras... esto puede tardar hasta 15 segundos</span>
-          </div>
-        )}
-
-        {results !== null && (
-          <div className="scan-results">
-            {results.length === 0 ? (
-              <div className="empty-state">
-                <AlertCircle size={24} />
-                <p>No se encontraron cámaras en la red.</p>
-                <small>Verifica que las cámaras estén encendidas y tengan ONVIF habilitado.</small>
-              </div>
-            ) : (
-              <>
-                <p className="scan-found">{results.length} dispositivo(s) encontrado(s)</p>
-                <div className="device-list">
-                  {results.map(cam => (
-                    <div key={cam.ip} className={`device-card ${cam.already_added ? 'device-added' : ''}`}>
-                      <div className="device-info">
-                        <div className="device-ip">{cam.ip}</div>
-                        <div className="device-meta">
-                          {cam.manufacturer} · {cam.model} · Puerto {cam.port}
-                        </div>
-                      </div>
-                      {cam.already_added
-                        ? <span className="badge-added"><CheckCircle size={12} /> Ya agregada</span>
-                        : <button className="btn btn-sm btn-outline" onClick={() => setSelectedCam(cam)}>
-                            <Plus size={12} /> Agregar
-                          </button>
-                      }
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {selectedCam && (
-        <CameraModal
-          initial={selectedCam}
-          onClose={() => setSelectedCam(null)}
-          onSaved={() => { setSelectedCam(null); onAdd() }}
-        />
+        </form>
       )}
-    </div>
+      {!form && error && <p role="alert" className="px-5 pb-5 pt-4 text-sm text-danger">{error}</p>}
+    </Card>
   )
 }
 
-// ─── Panel: Cámara existente ─────────────────────────────────────────────────
-
-function CameraCard({ cam, onUpdated, onDeactivated }) {
+export default function Settings() {
+  const { cameras, status, loaded, refreshCameras } = useLive()
   const { addToast } = useToast()
-  const [editing, setEditing] = useState(false)
-  const [confirming, setConfirming] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [scanning, setScanning] = useState(false)
+  const [deactivating, setDeactivating] = useState(null)
 
   const deactivate = async () => {
+    const cam = deactivating
+    setDeactivating(null)
     try {
-      const res = await fetch(`${API}/cameras/${cam.id}`, { method: 'DELETE' })
-      const data = await res.json()
-      if (data.ok) {
-        addToast(`Cámara "${cam.name}" desactivada`, 'success')
-        onDeactivated()
-      }
-    } catch {
-      addToast('Error de conexión', 'error')
+      await api.deleteCamera(cam.id)
+      addToast(`“${cam.name}” desactivada`, 'success')
+      refreshCameras()
+    } catch (e) {
+      addToast(`No se pudo desactivar: ${e.message}`, 'error')
     }
-    setConfirming(false)
   }
-
-  const statusColor = {
-    Normal: 'var(--teal)',
-    Advertencia: '#f59e0b',
-    Crítico: '#ef4444',
-    Excedido: '#991b1b',
-  }[cam.status] || 'var(--teal)'
 
   return (
     <>
-      <div className="camera-card">
-        <div className="camera-card-header">
-          <div className="camera-card-title">
-            <Camera size={16} className="text-amber" />
-            <span>{cam.name}</span>
-            <span className="camera-ip">({cam.ip_address})</span>
-          </div>
-          <div className="camera-card-actions">
-            {cam.status && (
-              <span className="status-dot" style={{ background: statusColor }} title={cam.status} />
-            )}
-            <button className="icon-btn text-blue" onClick={() => setEditing(true)} title="Editar">
-              <SettingsIcon size={14} />
-            </button>
-            <button className="icon-btn text-red" onClick={() => setConfirming(true)} title="Desactivar">
-              <X size={14} />
-            </button>
-          </div>
+      <PageHeader title="Ajustes" subtitle="Cámaras conectadas y umbrales de alerta">
+        <button type="button" className="btn-secondary" onClick={() => setScanning(true)} disabled={scanning}>
+          <MagnifyingGlass size={18} aria-hidden="true" /> Buscar en la red
+        </button>
+        <button type="button" className="btn-primary" onClick={() => setEditing({})}>
+          <Plus size={18} aria-hidden="true" /> Agregar cámara
+        </button>
+      </PageHeader>
+
+      {scanning && <DiscoveryPanel onClose={() => setScanning(false)} onPick={(d) => setEditing(d)} />}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5 2xl:grid-cols-12">
+        <div className="lg:col-span-2 2xl:col-span-8">
+          <CamerasCard cameras={cameras} status={status} loaded={loaded} onEdit={setEditing} onDeactivate={setDeactivating} />
         </div>
-        <div className="camera-card-body">
-          <div className="cam-meta-row">
-            <span className="cam-meta-label">Rol</span>
-            <span className="cam-meta-value">{
-              { both: 'Entrada y Salida', in_only: 'Solo Entrada', out_only: 'Solo Salida' }[cam.role] || cam.role
-            }</span>
-          </div>
-          {cam.zone && (
-            <div className="cam-meta-row">
-              <span className="cam-meta-label">Grupo</span>
-              <span className="cam-meta-value">{cam.zone}</span>
-            </div>
-          )}
-          <div className="cam-meta-row">
-            <span className="cam-meta-label">Aforo</span>
-            <span className="cam-meta-value">{cam.max_capacity} personas</span>
-          </div>
-          {cam.people_inside !== undefined && cam.people_inside !== null && (
-            <div className="cam-meta-row">
-              <span className="cam-meta-label">En local ahora</span>
-              <span className="cam-meta-value" style={{ color: statusColor, fontWeight: 700 }}>{cam.people_inside}</span>
-            </div>
-          )}
-          <div className="cam-meta-row">
-            <span className="cam-meta-label">Horario</span>
-            <span className="cam-meta-value">{cam.operating_hours_start} – {cam.operating_hours_end}</span>
-          </div>
+        <div className="contents 2xl:block 2xl:col-span-4 2xl:space-y-5">
+          <ThresholdsCard />
+          <Card className="p-5">
+            <h2 className="text-[17px] font-bold">Configuración del servidor</h2>
+            <p className="mt-1.5 text-sm text-fg-2">
+              El usuario y la contraseña de las cámaras, el intervalo de consulta, la zona horaria y el modo demo
+              se definen en <code className="rounded-[4px] bg-surface-2 px-1 py-0.5 text-[13px]">backend/.env</code> y
+              se aplican al reiniciar el backend.
+            </p>
+          </Card>
         </div>
       </div>
 
       {editing && (
-        <CameraModal initial={cam} onClose={() => setEditing(false)} onSaved={onUpdated} />
+        <CameraModal
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { refreshCameras(); setScanning(false) }}
+        />
       )}
 
-      {confirming && (
-        <div className="modal-overlay">
-          <div className="modal-box" style={{ maxWidth: 400 }}>
-            <div className="modal-header">
-              <span className="modal-title"><AlertCircle size={18} className="text-red" /> Desactivar cámara</span>
-            </div>
-            <div className="modal-body">
-              <p>¿Desactivar <strong>{cam.name}</strong>? El polling se detendrá. Puedes volver a agregarla desde "Escanear Red".</p>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-outline" onClick={() => setConfirming(false)}>Cancelar</button>
-              <button className="btn btn-danger" onClick={deactivate}>Desactivar</button>
-            </div>
-          </div>
-        </div>
+      {deactivating && (
+        <Modal
+          title="Desactivar cámara"
+          onClose={() => setDeactivating(null)}
+          width="max-w-md"
+          footer={
+            <>
+              <button type="button" className="btn-secondary" onClick={() => setDeactivating(null)}>Cancelar</button>
+              <button type="button" className="btn-danger" onClick={deactivate}>Desactivar</button>
+            </>
+          }
+        >
+          <p className="text-sm text-fg-2">
+            <strong className="text-fg">{deactivating.name}</strong> dejará de contar. Sus datos históricos se conservan
+            y puedes reactivarla agregándola otra vez con la misma IP.
+          </p>
+        </Modal>
       )}
-    </>
-  )
-}
-
-// ─── Ajustes del Sistema ─────────────────────────────────────────────────────
-
-function SystemSettingsPanel() {
-  const { addToast } = useToast()
-  const [form, setForm] = useState({
-    update_interval: 3,
-    heartbeat_interval: 3600,
-    timezone: 'America/Lima',
-    warning_threshold: 80,
-    critical_threshold: 100,
-  })
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    fetch(`${API}/settings`)
-      .then(r => r.json())
-      .then(res => { if (res.data) setForm(res.data) })
-      .catch(console.error)
-  }, [])
-
-  const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
-  const save = async () => {
-    setSaving(true)
-    try {
-      const res = await fetch(`${API}/settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
-      const data = await res.json()
-      if (data.ok) addToast('Configuración guardada', 'success')
-      else addToast('Error al guardar', 'error')
-    } catch {
-      addToast('Error de conexión', 'error')
-    }
-    setSaving(false)
-  }
-
-  return (
-    <div className="card">
-      <div className="card-header">
-        <span className="card-title"><Server size={16} className="text-teal" /> Configuración del Sistema</span>
-      </div>
-      <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <label className="form-field">
-          <span className="form-label">Zona Horaria</span>
-          <input className="form-input" value={form.timezone} onChange={e => f('timezone', e.target.value)} placeholder="America/Lima" />
-        </label>
-        <div className="form-grid">
-          <label className="form-field">
-            <span className="form-label">Umbral Advertencia (%)</span>
-            <input type="number" className="form-input" value={form.warning_threshold} onChange={e => f('warning_threshold', parseInt(e.target.value))} />
-          </label>
-          <label className="form-field">
-            <span className="form-label">Umbral Crítico (%)</span>
-            <input type="number" className="form-input" value={form.critical_threshold} onChange={e => f('critical_threshold', parseInt(e.target.value))} />
-          </label>
-          <label className="form-field">
-            <span className="form-label">Intervalo de polling (seg)</span>
-            <input type="number" min="2" className="form-input" value={form.update_interval} onChange={e => f('update_interval', parseInt(e.target.value))} />
-          </label>
-          <label className="form-field">
-            <span className="form-label">Heartbeat inactividad (seg)</span>
-            <input type="number" min="60" className="form-input" value={form.heartbeat_interval} onChange={e => f('heartbeat_interval', parseInt(e.target.value))} />
-          </label>
-        </div>
-        <button className="btn btn-success" onClick={save} disabled={saving} style={{ alignSelf: 'flex-start' }}>
-          {saving ? <Loader size={14} className="spin" /> : <Save size={14} />}
-          Guardar Sistema
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ─── Página Principal ────────────────────────────────────────────────────────
-
-export default function Settings() {
-  const { cameras, loading, reload } = useCameras()
-
-  return (
-    <>
-      <Topbar title="Ajustes del Sistema" subtitle="Configuración de cámaras y parámetros del sistema" connected={true} />
-      <div className="page-body">
-
-        {/* Sección superior: Sistema + Escaneo */}
-        <div className="settings-top-grid">
-          <SystemSettingsPanel />
-          <NetworkScanner onAdd={reload} />
-        </div>
-
-        {/* Sección: Cámaras configuradas */}
-        <div className="section-header">
-          <h3 className="section-title">Cámaras Configuradas</h3>
-          <span className="badge-count">{cameras.length} activa{cameras.length !== 1 ? 's' : ''}</span>
-        </div>
-
-        {loading ? (
-          <div className="loading-state"><Loader className="spin" size={24} /> Cargando cámaras...</div>
-        ) : cameras.length === 0 ? (
-          <div className="empty-cameras">
-            <Camera size={40} className="text-gray-300" />
-            <p>No hay cámaras configuradas.</p>
-            <small>Usa "Escanear Red" para descubrir cámaras conectadas al switch PoE.</small>
-          </div>
-        ) : (
-          <div className="cameras-grid">
-            {cameras.map(cam => (
-              <CameraCard key={cam.id} cam={cam} onUpdated={reload} onDeactivated={reload} />
-            ))}
-          </div>
-        )}
-      </div>
     </>
   )
 }
