@@ -37,7 +37,12 @@ export function useWebSocket(onMessage) {
       clearTimeout(retryTimer)
       if (ws) {
         ws.onclose = null
-        ws.close()
+        ws.onmessage = null
+        ws.onerror = null
+        // Cerrar mientras conecta da "closed before the connection is established"
+        // (pasa siempre con el doble montaje de StrictMode): se cierra al abrir.
+        if (ws.readyState === WebSocket.CONNECTING) ws.onopen = () => ws.close()
+        else ws.close()
       }
     }
   }, [])

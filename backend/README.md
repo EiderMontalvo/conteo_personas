@@ -125,6 +125,7 @@ Copia `.env.example` a `.env` y edita los valores. El archivo `.env` nunca debe 
 | `ONVIF_UNSUBSCRIBE` | Enviar Unsubscribe al reconectar (algunas camaras cancelan tambien las del NVR) | `false` |
 | `RECONNECT_MAX_DELAY` | Espera maxima entre reintentos (2s, 4s, 8s...) | `60` |
 | `DEMO_MODE` | `true` = no conecta a camaras, genera cruces simulados | `false` |
+| `VIDEO_PROFILE` | Numero del perfil de video (SUNAPI) para el MJPEG en vivo. Vacio = MJPEG por defecto, que en Hanwha es el de grabacion (2-5 fps). Ver "Perfil de video" en el README principal | — |
 | `DATABASE_URL` | URL de SQLAlchemy | `sqlite:///./conteo_personas.db` |
 | `TIMEZONE` | Zona horaria IANA | `America/Lima` |
 | `BUSINESS_HOUR_START` | Inicio del horario de negocio (0-24) | `0` |
@@ -216,6 +217,9 @@ Documentacion interactiva disponible en `/docs` (Swagger UI) y `/redoc`.
 | `GET` | `/api/v1/cameras/status` | Estado de conexion de cada camara (connecting / connected / reconnecting / stopped, ultimo error, proximo reintento) |
 | `GET` | `/api/v1/cameras/discover` | Escanear la red local para encontrar camaras ONVIF |
 | `GET` | `/api/v1/cameras/{id}` | Detalle de una camara |
+| `GET` | `/api/v1/cameras/{id}/stream` | Video en vivo MJPEG para un `<img>`. Reconecta solo si la camara corta o deja de mandar cuadros 10 s |
+| `GET` | `/api/v1/cameras/{id}/snapshot` | Imagen actual (JPEG) |
+| `GET` | `/api/v1/cameras/{id}/iva-lines` | Lineas virtuales IVA de la camara y el tamano de imagen de sus coordenadas, para dibujarlas sobre el video |
 | `PUT` | `/api/v1/cameras/{id}` | Actualizar camara (si cambia IP, el poller se reconecta automaticamente) |
 | `DELETE` | `/api/v1/cameras/{id}` | Desactivar camara y cancelar su poller |
 

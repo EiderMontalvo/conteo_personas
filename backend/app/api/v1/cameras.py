@@ -64,6 +64,22 @@ async def camera_stream(camera_pk: int, db: Session = Depends(database.get_db)):
 
 
 @router.get(
+    "/{camera_pk}/iva-lines",
+    summary="Líneas virtuales IVA configuradas en la cámara",
+    description="Coordenadas en el espacio width x height que devuelve, para dibujarlas sobre el video.",
+)
+async def camera_iva_lines(camera_pk: int, db: Session = Depends(database.get_db)):
+    from app.integrations.video import VideoUnavailable, fetch_iva_lines
+
+    cam = _video_camera(db, camera_pk)
+    try:
+        data = await fetch_iva_lines(cam.ip_address)
+    except VideoUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ApiResponse.success(data)
+
+
+@router.get(
     "",
     response_model=ApiResponse[List[CameraOut]],
     summary="Lista las cámaras configuradas",
